@@ -1,0 +1,1177 @@
+<title>走行ログビューア</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+/* Layout: phone-first single column. Dark instrument-cluster header with today's gauge → tabs (診断 / まとめ / 走行一覧) → cards.
+   One trip opens as its own view with diagnosis and stacked charts sharing one time cursor. */
+:root {
+  --bg: #eef1f3;
+  --surface: #ffffff;
+  --surface-2: #f6f8f9;
+  --fg: #141b21;
+  --muted: #5b6a74;
+  --line: #d6dde2;
+  --accent: #e0861f;       /* amber needle */
+  --accent-soft: #e0861f1f;
+  --sel: #1d6e8a;
+  --good: #23845a;
+  --good-soft: #23845a1a;
+  --danger: #c0443a;
+  --danger-soft: #c0443a17;
+  --warn: #b7791f;
+  --cluster: #151c22;      /* header band: same in both themes, like a dashboard */
+  --cluster-fg: #e9eef2;
+  --cluster-muted: #8a9aa5;
+  --cluster-line: #2a353e;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: "Chakra Petch", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1418; --surface: #182027; --surface-2: #1d262e; --fg: #e5ebef; --muted: #91a1ab; --line: #2a353e;
+    --accent: #f2a04a; --accent-soft: #f2a04a24; --sel: #63b6d3; --good: #5cc790; --good-soft: #5cc7901f;
+    --danger: #ec7b70; --danger-soft: #ec7b701c; --warn: #e3b051; --cluster: #0a0e11; --cluster-line: #222c34; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1418; --surface: #182027; --surface-2: #1d262e; --fg: #e5ebef; --muted: #91a1ab; --line: #2a353e;
+  --accent: #f2a04a; --accent-soft: #f2a04a24; --sel: #63b6d3; --good: #5cc790; --good-soft: #5cc7901f;
+  --danger: #ec7b70; --danger-soft: #ec7b701c; --warn: #e3b051; --cluster: #0a0e11; --cluster-line: #222c34; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.6; padding-bottom: 56px; }
+.wrap { max-width: 760px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+h1, h2, h3, h4 { text-wrap: balance; }
+
+/* header band */
+.cluster { background: var(--cluster); color: var(--cluster-fg); border-bottom: 1px solid var(--cluster-line); }
+.cluster .wrap { padding-block: 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+.brand { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand h1 { margin: 0; font-size: 1.05rem; font-weight: 700; letter-spacing: .06em; }
+.brand h1 small { display: block; font-size: .72rem; font-weight: 400; color: var(--cluster-muted); letter-spacing: .02em; }
+.btn { font: inherit; border-radius: 999px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #1b1206; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; position: relative; }
+.btn-primary input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.btn:focus-visible, .btn-primary:focus-within, button:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; }
+#status { font-size: .8rem; color: var(--cluster-muted); min-height: 1.2em; }
+.cloud { font-size: .8rem; color: var(--cluster-fg); }
+.cloud .linkish { color: var(--accent); }
+.cloud select { font: inherit; font-size: .85rem; margin-left: 4px; padding: 2px 6px; border-radius: 8px; }
+.progress { height: 3px; background: var(--cluster-line); border-radius: 2px; overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+/* tabs */
+.tabs { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.tabs .wrap { display: flex; gap: 2px; }
+.tabs button { flex: 1; border: 0; background: none; color: var(--muted); padding: 11px 6px; font: inherit; font-weight: 700; font-size: .9rem; cursor: pointer; }
+.tabs button[aria-selected="true"] { color: var(--fg); box-shadow: inset 0 -3px 0 var(--accent); }
+main.wrap { display: flex; flex-direction: column; gap: 16px; padding-block: 18px 0; }
+section { display: flex; flex-direction: column; gap: 14px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card h3 { margin: 0; font-size: 1rem; }
+.eyebrow { font-size: .72rem; color: var(--muted); letter-spacing: .08em; font-weight: 700; }
+.note { font-size: .78rem; color: var(--muted); margin: 0; }
+.empty { padding: 22px; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--r); font-size: .9rem; background: var(--surface); }
+.good { color: var(--good); } .bad { color: var(--danger); } .warnc { color: var(--warn); }
+
+/* day picker */
+.days { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.days button { flex: none; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 10px; padding: 6px 10px; font: inherit; font-size: .8rem; cursor: pointer; line-height: 1.3; text-align: center; }
+.days button b { display: block; font-family: var(--font-num); font-size: .95rem; }
+.days button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+
+/* hero gauge */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: center; }
+@media (max-width: 520px) { .hero { grid-template-columns: 1fr; } }
+.gauge { position: relative; width: 100%; max-width: 280px; margin: 0 auto; aspect-ratio: 2 / 1.18; }
+.gauge canvas { width: 100%; height: 100%; display: block; }
+.gauge .read { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; }
+.gauge .read b { font-family: var(--font-num); font-size: 2.3rem; line-height: 1; letter-spacing: .01em; }
+.gauge .read span { display: block; font-size: .75rem; color: var(--muted); }
+.verdict { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.verdict .big { font-size: 1.25rem; font-weight: 700; line-height: 1.35; }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); }
+.pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill.ok i { background: var(--good); } .pill.ng i { background: var(--danger); } .pill.mid i { background: var(--warn); }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 520px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpi { background: var(--surface-2); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.kpi b { display: block; font-family: var(--font-num); font-size: 1.15rem; white-space: nowrap; }
+.kpi span { font-size: .72rem; color: var(--muted); }
+
+/* advice list */
+.advice { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.advice li { display: grid; grid-template-columns: 4px 1fr; gap: 12px; padding: 10px 12px 10px 0; background: var(--surface-2); border-radius: 10px; overflow: hidden; }
+.advice li::before { content: ""; background: var(--muted); }
+.advice li.ok::before { background: var(--good); } .advice li.ng::before { background: var(--danger); } .advice li.mid::before { background: var(--warn); }
+.advice h4 { margin: 0 0 2px; font-size: .92rem; }
+.advice p { margin: 0; font-size: .88rem; color: var(--fg); }
+.advice strong { font-family: var(--font-num); }
+
+/* trip cards */
+.tripcards { display: flex; flex-direction: column; gap: 8px; }
+.tc { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: center; text-align: left; font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; cursor: pointer; }
+.tc:hover { border-color: var(--accent); }
+.tc .t { font-family: var(--font-num); font-size: 1rem; font-weight: 600; }
+.tc .m { font-size: .78rem; color: var(--muted); }
+.tc canvas { grid-column: 1 / -1; width: 100%; height: 28px; display: block; }
+.tc .e { font-family: var(--font-num); font-weight: 700; text-align: right; }
+.tc .e small { display: block; font-size: .72rem; font-weight: 500; }
+
+/* list */
+.trips { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--surface); }
+.month-h { padding: 6px 14px; font-size: .72rem; color: var(--muted); background: var(--surface-2); border-bottom: 1px solid var(--line); letter-spacing: .08em; font-weight: 700; }
+.trip { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 11px 14px; border: 0; border-bottom: 1px solid var(--line); text-align: left; background: transparent; font: inherit; color: var(--fg); cursor: pointer; }
+.trip:last-child { border-bottom: 0; }
+.trip[aria-current="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.trip .when { font-weight: 700; }
+.trip .eco { font-family: var(--font-num); font-weight: 700; }
+.trip .meta { color: var(--muted); font-size: .8rem; grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 2px 14px; font-family: var(--font-num); }
+
+/* overview + detail shared */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.stat b { display: block; font-size: 1.05rem; white-space: nowrap; font-family: var(--font-num); }
+.stat span { font-size: .72rem; color: var(--muted); }
+.finding { display: grid; grid-template-columns: 5.4em 1fr; gap: 2px 10px; font-size: .9rem; }
+.finding .tag { font-size: .72rem; color: var(--muted); letter-spacing: .04em; padding-top: 3px; font-weight: 700; }
+.finding p { margin: 0; min-width: 0; }
+.finding strong { font-family: var(--font-num); }
+.bands { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; font-size: .78rem; }
+.bands .lbl { color: var(--muted); white-space: nowrap; }
+.bands .bar { position: relative; height: 14px; }
+.bands .bar i { position: absolute; left: 0; height: 6px; border-radius: 3px; }
+.bands .bar .f { top: 0; background: var(--accent); }
+.bands .bar .d { top: 8px; background: var(--muted); opacity: .5; }
+.bands .kml { font-family: var(--font-num); text-align: right; white-space: nowrap; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .72rem; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 6px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
+.events { display: flex; flex-wrap: wrap; gap: 6px; }
+.events button { padding: 3px 8px; font-size: .78rem; font-family: var(--font-num); border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+.events button.brake { border-color: var(--danger); color: var(--danger); }
+.ov-chart canvas { display: block; width: 100%; height: 170px; }
+.linkish { border: 0; background: none; padding: 0; color: var(--sel); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.back { border: 0; background: none; color: var(--sel); padding: 2px 0; font: inherit; font-size: .9rem; align-self: flex-start; cursor: pointer; }
+.detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
+.detail-head h3 { margin: 0; font-size: 1.1rem; }
+.link-danger { border: 0; background: none; color: var(--danger); padding: 4px 0; font: inherit; font-size: .82rem; cursor: pointer; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { position: relative; }
+.chip input { position: absolute; opacity: 0; }
+.chip span { display: inline-block; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: .78rem; cursor: pointer; background: var(--surface); }
+.chip input:checked + span { border-color: var(--sel); color: var(--sel); font-weight: 700; }
+.chip input:focus-visible + span { outline: 2px solid var(--sel); outline-offset: 2px; }
+details summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+details[open] summary { margin-bottom: 8px; }
+.readout { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 46px); z-index: 2; background: var(--bg); padding: 6px 0; font-size: .82rem; color: var(--muted); font-family: var(--font-num); }
+.charts { display: flex; flex-direction: column; gap: 6px; }
+.chart { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px 4px; }
+.chart-head { display: flex; justify-content: space-between; gap: 8px; font-size: .78rem; }
+.chart-head .val { font-family: var(--font-num); font-weight: 700; color: var(--accent); }
+.chart canvas { display: block; width: 100%; height: 96px; touch-action: pan-y; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header class="cluster">
+  <div class="wrap">
+    <div class="brand">
+      <h1>走行ログビューア<small>Car Scanner の記録を読み込むと、その日の運転を診断します</small></h1>
+      <label class="btn-primary btn" for="file">走行データを読み込む
+        <input id="file" type="file" accept=".csv,.zip,.json,text/csv,application/zip,application/json" multiple>
+      </label>
+    </div>
+    <div id="cloud" class="cloud">クラウドの保存先を確認中…</div>
+    <div id="wx" class="cloud"></div>
+    <div id="status" role="status">CSV か zip を選びます。取り込んだ走行は、このアプリ専用の非公開の保存先にたまっていきます。</div>
+    <div class="progress" id="prog" hidden><i></i></div>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <div class="wrap">
+    <button type="button" role="tab" id="tab-day" aria-selected="true">診断</button>
+    <button type="button" role="tab" id="tab-ov" aria-selected="false">まとめ</button>
+    <button type="button" role="tab" id="tab-list" aria-selected="false">走行一覧</button>
+  </div>
+</nav>
+
+<main class="wrap">
+  <section id="v-day"></section>
+  <section id="v-ov" hidden></section>
+  <section id="v-list" hidden><div id="trips"></div></section>
+
+  <section id="detail" hidden>
+    <button type="button" class="back" id="d-back">← もどる</button>
+    <div class="detail-head">
+      <h3 id="d-title"></h3>
+      <button id="d-delete" class="link-danger" type="button">この走行を削除</button>
+    </div>
+    <div class="stats" id="d-stats"></div>
+    <div class="card" id="d-diag"></div>
+    <details id="d-pick">
+      <summary>グラフに出す項目を選ぶ</summary>
+      <div class="chips" id="d-chips"></div>
+    </details>
+    <div class="readout" id="d-readout">グラフをなぞると、その時点の値が出ます</div>
+    <div class="charts" id="d-charts"></div>
+    <p class="note">グラフは1秒ごとに間引いた値です。距離・燃料は速度と瞬時燃料消費量から計算しています。</p>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ---------- storage (IndexedDB): summaries and 1 s series kept apart so the list loads fast ----------
+const DB_NAME = "drive-data-web";
+let dbp = null;
+function db() {
+  if (!dbp) dbp = new Promise((res, rej) => {
+    try {
+      const r = indexedDB.open(DB_NAME, 3);
+      r.onupgradeneeded = () => {
+        const d = r.result;
+        // summaries gained fields in v3; re-importing is cheap, so start clean
+        for (const n of [...d.objectStoreNames]) d.deleteObjectStore(n);
+        d.createObjectStore("trips", { keyPath: "id" });
+        d.createObjectStore("series", { keyPath: "id" });
+      };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    } catch (e) { rej(e); }
+  });
+  return dbp;
+}
+async function tx(stores, mode, fn) {
+  try {
+    const d = await db();
+    return await new Promise((res, rej) => {
+      const t = d.transaction(stores, mode);
+      const out = fn(...[].concat(stores).map(s => t.objectStore(s)));
+      t.oncomplete = () => res(out && out.result !== undefined ? out.result : undefined);
+      t.onerror = () => rej(t.error);
+    });
+  } catch (e) { console.warn("IndexedDB unavailable", e); return undefined; }
+}
+const mem = { trips: new Map(), series: new Map() }; // fallback when IndexedDB is blocked
+async function putTrip(sum, series) {
+  mem.trips.set(sum.id, sum); mem.series.set(sum.id, series);
+  await tx(["trips", "series"], "readwrite", (a, b) => { a.put(sum); b.put({ id: sum.id, series }); });
+  mem.series.delete(sum.id); // keep memory small once stored
+}
+async function getSeries(id) {
+  if (mem.series.has(id)) return mem.series.get(id);
+  const r = await tx("series", "readonly", s => s.get(id));
+  if (r) return r.series;
+  const c = await cloudSeries(id); // this device lost it (or never had it): rebuild from the cloud copy
+  if (c) { mem.series.set(id, c); await tx("series", "readwrite", s => s.put({ id, series: c })); mem.series.delete(id); }
+  return c;
+}
+async function delTrip(id) {
+  mem.trips.delete(id); mem.series.delete(id);
+  await tx(["trips", "series"], "readwrite", (a, b) => { a.delete(id); b.delete(id); });
+  const db = await cloud();
+  if (db) try { await db.doc("trips/" + docId(id)).delete(); await db.doc("series/" + docId(id)).delete(); } catch (e) { console.warn(e); }
+}
+async function allTrips() {
+  const got = await tx("trips", "readonly", s => s.getAll());
+  (got || []).forEach(t => mem.trips.set(t.id, t));
+  return [...mem.trips.values()].sort((a, b) => b.startMs - a.startMs);
+}
+
+// ---------- cloud copy (this artifact's private database): the history survives the phone clearing its storage ----------
+// trips/<id>  : the summary (same object the list and diagnosis use)
+// series/<id> : the per-second series, quantized to 16 bits and thinned so one document stays under ~190 KB
+let cloudP = null, cloudState = { ok: false, count: 0, error: "" };
+function cloud() {
+  if (!cloudP) cloudP = (async () => { try { return window.claude ? await window.claude.use("db") : null; } catch { return null; } })();
+  return cloudP;
+}
+const docId = id => id.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
+const toJSON = o => JSON.parse(JSON.stringify(o, (k, v) => (typeof v === "number" && !isFinite(v)) ? null : v));
+const NUM_FIELDS = ["distKm", "fuelL", "kmPerL", "ct0", "ctMax", "warmS", "warmF", "warmD", "preIdleS", "preIdleF", "ctDep", "hwAfterS", "ctHw", "rpmCold", "maxKmh"];
+function fromJSON(o) { for (const k of NUM_FIELDS) if (o[k] === null) o[k] = NaN; return o; }
+async function retry(fn) {
+  for (let a = 0; ; a++) {
+    try { return await fn(); } catch (e) {
+      if (a >= 4 || !["resource_exhausted", "unavailable"].includes(e && e.code)) throw e;
+      await new Promise(r => setTimeout(r, 600 * 2 ** a + Math.random() * 300));
+    }
+  }
+}
+// the cloud copy keeps the items worth replaying, every 2 s at 8-bit resolution (about 15 KB per 30 min);
+// this device keeps the full per-second series of every item
+const CLOUD_PIDS = ["自動車速度", "エンジン回転数", "瞬時燃料消費量(リットル/時)", "冷却水温度", "スロットル位置", "スロットル相対位置", "加速", "吸気温度", "インテークマニホールド圧力(絶対値)", "空気流量", "エンジン負荷の計画値", "電圧 (ELM327)", "ECU電圧", "短期調整 - ユニット 1", "長期調整 - ユニット 1"];
+function packSeries(series) {
+  const names = CLOUD_PIDS.filter(nm => series[nm]); if (!names.length) return null;
+  const len = series[names[0]].length, budget = 180000;
+  const step = Math.max(2, Math.ceil(len * names.length * 4 / 3 / budget));
+  const n = Math.ceil(len / step), cols = {};
+  for (const nm of names) {
+    const a = series[nm]; let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < len; i++) { const v = a[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (!isFinite(lo)) continue;
+    const sc = (hi - lo) / 254 || 1e-6, q = new Uint8Array(n);
+    for (let j = 0; j < n; j++) { const v = a[j * step]; q[j] = isFinite(v) ? Math.round((v - lo) / sc) : 255; }
+    let str = "";
+    for (let i = 0; i < q.length; i += 8192) str += String.fromCharCode.apply(null, q.subarray(i, i + 8192));
+    cols[nm] = { lo, sc, d: btoa(str) };
+  }
+  return { v: 2, len, step, cols };
+}
+function unpackSeries(p) {
+  const out = {};
+  for (const [nm, c] of Object.entries(p.cols)) {
+    const bin = atob(c.d), a = new Float32Array(p.len);
+    for (let i = 0; i < p.len; i++) {
+      // linear between stored points so the replay is smooth
+      const x = i / p.step, j = Math.floor(x), f = x - j;
+      const q0 = bin.charCodeAt(Math.min(bin.length - 1, j)), q1 = bin.charCodeAt(Math.min(bin.length - 1, j + 1));
+      a[i] = q0 === 255 ? NaN : q1 === 255 ? q0 * c.sc + c.lo : (q0 + (q1 - q0) * f) * c.sc + c.lo;
+    }
+    out[nm] = a;
+  }
+  return out;
+}
+async function cloudPut(sum, series) {
+  const db = await cloud(); if (!db) return false;
+  const id = docId(sum.id), packed = packSeries(series);
+  if (packed) await retry(() => db.doc("series/" + id).set(packed));
+  await retry(() => db.doc("trips/" + id).set(toJSON({ ...sum, cloud: true })));
+  return true;
+}
+async function cloudSeries(id) {
+  const db = await cloud(); if (!db) return null;
+  try { const s = await db.doc("series/" + docId(id)).get(); return s.exists ? unpackSeries(s.data()) : null; } catch (e) { console.warn(e); return null; }
+}
+async function cloudTrips() {
+  const db = await cloud(); if (!db) return null;
+  const out = []; let last = -Infinity;
+  for (;;) {
+    let q = db.collection("trips").orderBy("startMs").limit(1000);
+    if (last > -Infinity) q = q.where("startMs", ">", last);
+    const snap = await retry(() => q.get());
+    snap.docs.forEach(d => out.push(fromJSON({ ...d.data() })));
+    if (snap.size < 1000) break;
+    last = out[out.length - 1].startMs;
+  }
+  return out;
+}
+// merge the cloud history into this device: summaries now, series when a trip is opened
+async function syncFromCloud() {
+  try {
+    const list = await cloudTrips();
+    if (!list) { cloudState = { ok: false, count: 0, error: "" }; return; }
+    const missing = list.filter(t => !mem.trips.has(t.id) || !mem.trips.get(t.id).cloud);
+    for (const t of list) mem.trips.set(t.id, t);
+    if (missing.length) await tx("trips", "readwrite", s => { missing.forEach(t => s.put(t)); });
+    cloudState = { ok: true, count: list.length, error: "" };
+  } catch (e) { console.warn(e); cloudState = { ok: false, count: 0, error: e && e.code || "error" }; }
+}
+async function markCloud(sum) { sum.cloud = true; mem.trips.set(sum.id, sum); await tx("trips", "readwrite", s => s.put(sum)); }
+
+// ---------- weather: hourly temperature / rain for each driving day (Open-Meteo, no key) ----------
+// the shortcut rounds the location to 0.1° (about 10 km), so no address is kept
+// weather/<YYYY-MM>   : { days: { "YYYY-MM-DD": { t:[24], p:[24], c:[24] } } }
+const WX = { loc: null, days: {} };
+const WX_LS = "ddw-wx";
+function wxLoadLocal() { try { const o = JSON.parse(localStorage.getItem(WX_LS) || "{}"); WX.loc = o.loc || null; WX.days = o.days || {}; } catch {} }
+function wxSaveLocal() { try { localStorage.setItem(WX_LS, JSON.stringify({ loc: WX.loc, days: WX.days })); } catch {} }
+async function wxLoadCloud() {
+  const db = await cloud(); if (!db) return;
+  try {
+    const snap = await db.collection("weather").get();
+    snap.docs.forEach(d => Object.assign(WX.days, d.data().days || {}));
+  } catch (e) { console.warn(e); }
+}
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// weather.json is the raw Open-Meteo answer saved by the iPhone shortcut (this page cannot reach the service itself)
+function wxParse(j) {
+  const h = j && j.hourly, out = {};
+  if (!h || !h.time || !h.temperature_2m) throw new Error("天気のファイルではないようです");
+  for (let i = 0; i < h.time.length; i++) {
+    const day = h.time[i].slice(0, 10), hr = +h.time[i].slice(11, 13);
+    if (h.temperature_2m[i] == null) continue;
+    const o = out[day] || (out[day] = { t: [], p: [], c: [] });
+    o.t[hr] = h.temperature_2m[i]; o.p[hr] = h.precipitation ? h.precipitation[i] : 0; o.c[hr] = h.weather_code ? h.weather_code[i] : 0;
+  }
+  return out;
+}
+async function wxImport(text) {
+  const j = JSON.parse(text), got = wxParse(j), today = ymd(new Date()), touched = new Set();
+  const filled = d => d ? d.t.filter(v => v != null).length : 0;
+  for (const [k, d] of Object.entries(got)) {
+    if (k > today || filled(d) < filled(WX.days[k])) continue;   // skip forecasts and never replace a fuller day
+    WX.days[k] = d; touched.add(k.slice(0, 7));
+  }
+  if (isFinite(j.latitude)) WX.loc = { lat: Math.round(j.latitude * 10) / 10, lon: Math.round(j.longitude * 10) / 10 };
+  wxSaveLocal();
+  const db = await cloud();
+  if (db) for (const m of touched) {
+    const days = Object.fromEntries(Object.entries(WX.days).filter(([k]) => k.startsWith(m)));
+    try { await retry(() => db.doc("weather/" + m).set({ days })); } catch (e) { console.warn(e); }
+  }
+  return Object.keys(got).filter(k => k <= today).length;
+}
+const WX_NAMES = [[0, "快晴"], [2, "晴れ"], [3, "くもり"], [48, "霧"], [57, "霧雨"], [67, "雨"], [77, "雪"], [82, "にわか雨"], [86, "にわか雪"], [99, "雷雨"]];
+const wxName = c => (WX_NAMES.find(([m]) => c <= m) || [0, "—"])[1];
+// weather during one trip: temperature at the start, rain / snow while driving
+function wxOf(t) {
+  const d = WX.days[dayOf(t.startMs)]; if (!d) return null;
+  const h0 = new Date(t.startMs).getHours(), h1 = Math.min(23, new Date(t.startMs + (t.durS || 0) * 1000).getHours());
+  const temp = d.t[h0]; if (temp == null) return null;
+  let p = 0, code = 0;
+  for (let h = h0; h <= h1; h++) { p += d.p[h] || 0; code = Math.max(code, d.c[h] || 0); }
+  const snow = (code >= 71 && code <= 77) || code === 85 || code === 86;
+  return { temp, p, code, wet: !snow && (p >= 0.3 || (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95), snow, name: wxName(code) };
+}
+function wxDay(k) {
+  const d = WX.days[k]; if (!d) return null;
+  const day = d.t.slice(6, 21).filter(v => v != null);
+  const codes = d.c.slice(6, 21).filter(v => v != null);
+  return { lo: Math.min(...d.t.filter(v => v != null)), hi: Math.max(...day), p: d.p.reduce((s, v) => s + (v || 0), 0), name: wxName(Math.max(...codes)) };
+}
+function wxBadge() {
+  const el = $("wx"); if (!el) return;
+  const n = trips.filter(t => wxOf(t)).length;
+  el.textContent = n ? `天気：${n} / ${trips.length} 件の走行に付いています。新しい走行の分は、ショートカットで作った weather.json を一緒に読み込むと付きます。`
+    : "天気を付けるには、iPhone のショートカットで作った weather.json を走行データと一緒に読み込みます。";
+}
+
+// ---------- zip (stored / deflate), one entry at a time ----------
+function zipEntries(buf) {
+  const v = new DataView(buf), u8 = new Uint8Array(buf), out = [];
+  let eocd = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) if (v.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("zip の形式を読めませんでした");
+  let p = v.getUint32(eocd + 16, true);
+  const n = v.getUint16(eocd + 10, true), dec = new TextDecoder();
+  for (let k = 0; k < n; k++) {
+    const method = v.getUint16(p + 10, true), csize = v.getUint32(p + 20, true);
+    const nlen = v.getUint16(p + 28, true), elen = v.getUint16(p + 30, true), clen = v.getUint16(p + 32, true);
+    const lho = v.getUint32(p + 42, true), name = dec.decode(u8.subarray(p + 46, p + 46 + nlen));
+    p += 46 + nlen + elen + clen;
+    if (!/\.csv$/i.test(name) || name.includes("__MACOSX")) continue;
+    out.push({ name: name.split("/").pop(), read: async () => {
+      const start = lho + 30 + v.getUint16(lho + 26, true) + v.getUint16(lho + 28, true);
+      const data = u8.subarray(start, start + csize);
+      if (method === 0) return dec.decode(data);
+      if (method !== 8) throw new Error(`${name}: 対応していない圧縮形式です`);
+      const s = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      return await new Response(s).text();
+    } });
+  }
+  return out;
+}
+
+// ---------- parse Car Scanner CSV ----------
+// Two layouts exist: one recording exported alone is long ("SECONDS";"PID";"VALUE";"UNITS"),
+// "export all" is wide (time,"PID (unit)",... with sparse cells).
+const unq = s => s.replace(/^"|"$/g, "");
+function splitHeader(line) {
+  const out = []; let cur = "", q = false;
+  for (const ch of line) {
+    if (ch === '"') q = !q; else if (ch === "," && !q) { out.push(cur); cur = ""; } else cur += ch;
+  }
+  out.push(cur); return out;
+}
+function parseRaw(name, text) {
+  const nl = text.indexOf("\n"), first = text.slice(0, nl < 0 ? undefined : nl).replace(/\r$/, "");
+  const raw = new Map();
+  const add = (pid, unit, t, v) => { let r = raw.get(pid); if (!r) raw.set(pid, r = { unit, t: [], v: [] }); r.t.push(t); r.v.push(v); };
+  let prev = -Infinity, off = 0;
+  const wrap = t => { if (t + off < prev - 3600) off += 86400; t += off; prev = t; return t; };
+  const lines = text.split(/\r?\n/);
+  if (first.startsWith('"SECONDS"')) {
+    for (let i = 1; i < lines.length; i++) {
+      const f = lines[i].split('";"'); if (f.length < 3) continue;
+      const t = parseFloat(unq(f[0])), v = parseFloat(f[2]);
+      if (!isFinite(t) || !isFinite(v)) continue;
+      add(f[1], (f[3] || "").replace(/[";]/g, ""), wrap(t), v);
+    }
+  } else if (first.startsWith("time,")) {
+    const cols = splitHeader(first).slice(1).map(h => { const m = h.match(/^(.*) \(([^()]*)\)$/); return m ? [m[1], m[2]] : [h, ""]; });
+    for (let i = 1; i < lines.length; i++) {
+      const L = lines[i]; if (!L) continue;
+      const f = L.split(",");
+      const hms = f[0].split(":"); if (hms.length !== 3) continue;
+      const t = wrap(+hms[0] * 3600 + +hms[1] * 60 + parseFloat(hms[2]));
+      for (let j = 1; j < f.length && j <= cols.length; j++) {
+        if (f[j] === "") continue;
+        const v = parseFloat(f[j]); if (isFinite(v) && cols[j - 1][0]) add(cols[j - 1][0], cols[j - 1][1], t, v);
+      }
+    }
+  } else throw new Error(`${name}: 想定と違う形式です`);
+  if (!raw.size) throw new Error(`${name}: データがありません`);
+  return raw;
+}
+const HIDE_PIDS = /x1000|\((合計|週|今日)\)|燃料費|10 sec|^平均|走行した距離|使用した燃料量|CHECK ENGINE/;
+function buildTrip(name, raw) {
+  let tMin = Infinity, tMax = -Infinity;
+  for (const r of raw.values()) { tMin = Math.min(tMin, r.t[0]); tMax = Math.max(tMax, r.t[r.t.length - 1]); }
+  const t0 = Math.floor(tMin), len = Math.ceil(tMax) - t0 + 1;
+  const series = {}, pids = [];
+  for (const [pid, r] of raw) {
+    if (HIDE_PIDS.test(pid)) continue; // app-side counters: not worth storing per second
+    const a = new Float32Array(len).fill(NaN);
+    for (let j = 0; j < r.t.length; j++) a[Math.floor(r.t[j]) - t0] = r.v[j];
+    let last = NaN, age = 99;
+    for (let j = 0; j < len; j++) { if (isNaN(a[j])) { if (age < 5) a[j] = last; age++; } else { last = a[j]; age = 0; } }
+    series[pid] = a; pids.push({ name: pid, unit: r.unit });
+  }
+  const m = name.match(/(\d{4})-(\d{2})-(\d{2})/);
+  const base = m ? new Date(+m[1], m[2] - 1, +m[3]).getTime() : Date.now();
+  const sum = { id: name, file: name, startMs: base + tMin * 1000, startSec: t0, durS: tMax - tMin, pids, ...metrics(series) };
+  return { sum, series };
+}
+
+// ---------- per-trip metrics (stored with the summary, used by the list, diagnosis and overview) ----------
+// hard acceleration / braking: an average of 8 km/h per second or more over 3 s (about 0.23 G held for 3 s).
+// The adapter often repeats the last speed for a few seconds and then jumps, so a 1 s step would count
+// ordinary stops as hard braking; the 3 s window spreads those jumps back over the time they took.
+const EV_VER = 2, EV_WIN = 3, EV_TH = 8;
+function harsh(sp) {
+  const ev = []; let last = -99;
+  for (let i = EV_WIN; i < sp.length; i++) {
+    const r = (sp[i] - sp[i - EV_WIN]) / EV_WIN; if (!isFinite(r) || Math.abs(r) < EV_TH) continue;
+    const kind = r < 0 ? "brake" : "accel", p = ev[ev.length - 1];
+    if (p && p.kind === kind && i - last <= EV_WIN + 1) { p.peak = Math.max(p.peak, Math.abs(r)); last = i; continue; }
+    ev.push({ i: i - EV_WIN, kind, peak: Math.abs(r) }); last = i;
+  }
+  const brakes = ev.filter(e => e.kind === "brake").length;
+  return { events: ev, brakes, accels: ev.length - brakes, evV: EV_VER };
+}
+// trips saved before the rule changed: recount from the stored series, here and in the cloud
+async function recountHarsh() {
+  const old = trips.filter(t => t.evV !== EV_VER);
+  if (!old.length) return false;
+  const db = await cloud(); let k = 0, changed = 0;
+  for (const t of old) {
+    $("status").textContent = `急ブレーキの数え方を更新中… ${++k} / ${old.length}`;
+    const s = await getSeries(t.id);
+    if (s && s[SP]) { Object.assign(t, harsh(s[SP])); changed++; } else t.evV = EV_VER;   // nothing to recount: leave the numbers as they were
+    mem.trips.set(t.id, t); await tx("trips", "readwrite", st => st.put(t));
+    if (db && t.cloud) try { await retry(() => db.doc("trips/" + docId(t.id)).set(toJSON(t))); } catch (e) { console.warn(e); }
+  }
+  $("status").textContent = changed ? `急ブレーキの数え方を新しくしました（3秒で24km/h以上の減速だけを数えます）。` : "";
+  return changed > 0;
+}
+const SP = "自動車速度", LH = "瞬時燃料消費量(リットル/時)", CT = "冷却水温度", RPM = "エンジン回転数";
+function metrics(S) {
+  const sp = S[SP], lh = S[LH], ct = S[CT], rpm = S[RPM];
+  const m = { hasFuel: !!lh };
+  if (!sp) return m;
+  const n = sp.length, f = i => (lh && lh[i] > 0 ? lh[i] / 3600 : 0), d = i => (sp[i] > 0 ? sp[i] / 3600 : 0);
+  let dist = 0, fuel = 0, idleS = 0, idleF = 0, fastD = 0, fastF = 0, cut = 0, maxKmh = 0, rpm4k = 0;
+  const bands = BANDS.map(() => ({ f: 0, d: 0, s: 0 }));
+  for (let i = 0; i < n; i++) {
+    const v = sp[i]; if (!isFinite(v)) continue;
+    const fi = f(i), di = d(i); dist += di; fuel += fi;
+    if (v > maxKmh) maxKmh = v;
+    if (v === 0) { idleS++; idleF += fi; }
+    if (v >= 80) { fastD += di; fastF += fi; }
+    if (lh && v > 5 && lh[i] < 0.05) cut++;
+    if (rpm && rpm[i] > 4000) rpm4k++;
+    const b = BANDS.findIndex(([a, z]) => v >= a && v < z); if (b >= 0) { bands[b].f += fi; bands[b].d += di; bands[b].s++; }
+  }
+  Object.assign(m, { distKm: dist, fuelL: lh ? fuel : NaN, idleS, idleF, fastD, fastF, cut, maxKmh, rpm4k, bands, movingS: n - idleS });
+  m.kmPerL = lh && fuel > 0.05 ? dist / fuel : NaN;
+  if (ct) {
+    let first = NaN, w = -1, mx = -Infinity;
+    for (let i = 0; i < n; i++) { const c = ct[i]; if (!isFinite(c)) continue; if (isNaN(first)) first = c; if (w < 0 && c >= 80) w = i; if (c > mx) mx = c; }
+    m.ct0 = first; m.ctMax = mx; m.warmS = w;
+    if (w > 0) { let wf = 0, wd = 0; for (let i = 0; i < w; i++) { wf += f(i); wd += d(i); } m.warmF = wf; m.warmD = wd; }
+  }
+  Object.assign(m, harsh(sp));
+
+  // warm-up: idling before the first move, coolant when leaving and when first reaching 60 km/h
+  let dep = 0; while (dep < n && !(sp[dep] > 0)) dep++;
+  m.preIdleS = dep < n ? dep : NaN;
+  if (dep < n) {
+    let pf = 0; for (let i = 0; i < dep; i++) pf += f(i); m.preIdleF = pf;
+    if (ct) {
+      const at = i => { for (let k = i; k >= 0; k--) if (isFinite(ct[k])) return ct[k]; return NaN; };
+      m.ctDep = at(dep);
+      let hw = dep; while (hw < n && !(sp[hw] >= 60)) hw++;
+      if (hw < n) { m.hwAfterS = hw - dep; m.ctHw = at(hw); }
+      if (rpm) { let mx = 0; for (let i = dep; i < n; i++) { if (ct[i] >= 60) break; if (rpm[i] > mx) mx = rpm[i]; } m.rpmCold = mx; }
+    }
+  }
+  // 48-point speed outline for the trip cards
+  const k = 48, sp48 = [];
+  for (let j = 0; j < k; j++) { let mx = 0; for (let i = Math.floor(j * n / k); i < Math.floor((j + 1) * n / k); i++) if (sp[i] > mx) mx = sp[i]; sp48.push(Math.round(mx)); }
+  m.spark = sp48;
+  return m;
+}
+
+// ---------- formatting ----------
+const fmt = (x, d = 1) => isFinite(x) ? x.toLocaleString("ja-JP", { minimumFractionDigits: d, maximumFractionDigits: d }) : "—";
+const dur = s => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return h ? `${h}時間${m}分` : `${m}分${s % 60}秒`; };
+const clock = sec => { sec = ((Math.floor(sec) % 86400) + 86400) % 86400; return [sec / 3600 | 0, (sec / 60 | 0) % 60, sec % 60].map(n => String(n).padStart(2, "0")).join(":"); };
+const dateStr = ms => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()}（${"日月火水木金土"[d.getDay()]}）${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+const monthKey = ms => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+const signed = (x, d = 1) => (x > 0 ? "+" : x < 0 ? "−" : "±") + fmt(Math.abs(x), d);
+
+// ---------- what drives fuel economy across this person's trips ----------
+const BANDS = [[0, 1, "停車"], [1, 40, "〜40"], [40, 60, "40〜60"], [60, 80, "60〜80"], [80, 100, "80〜100"], [100, 999, "100〜"]];
+const FACTORS = [
+  ["idle", "停車の割合", t => t.idleS / (t.idleS + t.movingS)],
+  ["fast", "80km/h以上の割合", t => t.distKm > 0 ? t.fastD / t.distKm : 0],
+  ["warm", "暖機中の燃料の割合", t => t.warmF && t.fuelL > 0 ? t.warmF / t.fuelL : 0],
+  ["harsh", "急な加減速", t => t.distKm > 0 ? Math.min((t.brakes + t.accels) / t.distKm * 10, 30) / 10 : 0]
+];
+let model = null; // { coef, base, avgX, medKml }
+function fitModel(trips) {
+  const v = trips.filter(t => t.distKm >= 1 && isFinite(t.kmPerL));
+  if (v.length < 8) return null;
+  const k = FACTORS.length + 1, A = Array.from({ length: k }, () => new Array(k).fill(0)), b = new Array(k).fill(0);
+  let wsum = 0; const avgX = new Array(FACTORS.length).fill(0);
+  for (const t of v) {
+    const x = [...FACTORS.map(F => F[2](t)), 1], w = Math.sqrt(t.distKm);
+    x.slice(0, -1).forEach((xi, j) => avgX[j] += xi * t.distKm); wsum += t.distKm;
+    for (let i = 0; i < k; i++) { b[i] += w * x[i] * t.kmPerL; for (let j = 0; j < k; j++) A[i][j] += w * x[i] * x[j]; }
+  }
+  for (let i = 0; i < k - 1; i++) A[i][i] += 1e-3; // tiny ridge so a constant factor does not break the solve
+  for (let c = 0; c < k; c++) { // Gauss-Jordan
+    let p = c; for (let r = c + 1; r < k; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]];
+    for (let r = 0; r < k; r++) if (r !== c) { const q = A[r][c] / A[c][c]; for (let j = c; j < k; j++) A[r][j] -= q * A[c][j]; b[r] -= q * b[c]; }
+  }
+  const coef = b.map((x, i) => x / A[i][i]);
+  const kmls = v.map(t => t.kmPerL).sort((a, z) => a - z);
+  const totD = v.reduce((s, t) => s + t.distKm, 0), totF = v.reduce((s, t) => s + t.fuelL, 0);
+  return { coef, avgX: avgX.map(x => x / wsum), medKml: kmls[kmls.length >> 1], avgKml: totD / totF, n: v.length };
+}
+function explain(t) {
+  if (!model || !isFinite(t.kmPerL) || t.distKm < 1) return null;
+  const parts = FACTORS.map((F, j) => ({ label: F[1], key: F[0], eff: model.coef[j] * (F[2](t) - model.avgX[j]) }));
+  parts.sort((a, z) => Math.abs(z.eff) - Math.abs(a.eff));
+  return { diff: t.kmPerL - model.avgKml, parts };
+}
+
+
+// ---------- UI ----------
+const $ = id => document.getElementById(id);
+const DEFAULT_PIDS = [SP, RPM, "スロットル位置", LH, "加速", CT];
+const VIEWS = ["day", "ov", "list", "detail"];
+let trips = [], current = null, curSeries = null, selected = null, charts = [], cursor = -1, view = "day", prevView = "day", dayKey = null;
+let usual = null; // per-person baselines for the day diagnosis
+
+function savedSel() { try { return JSON.parse(localStorage.getItem("ddw-sel")); } catch { return null; } }
+function saveSel() { try { localStorage.setItem("ddw-sel", JSON.stringify([...selected])); } catch {} }
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+const dayOf = ms => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const dayLabel = k => { const d = new Date(k + "T00:00"); return `${d.getMonth() + 1}月${d.getDate()}日（${"日月火水木金土"[d.getDay()]}）`; };
+
+function show(v) {
+  if (v !== "detail") prevView = v;
+  view = v;
+  for (const x of VIEWS) $(x === "detail" ? "detail" : "v-" + x).hidden = x !== v;
+  $("tab-day").setAttribute("aria-selected", v === "day");
+  $("tab-ov").setAttribute("aria-selected", v === "ov");
+  $("tab-list").setAttribute("aria-selected", v === "list");
+  if (v === "day") renderDay();
+  if (v === "ov") renderOverview();
+  if (v === "list") renderList();
+}
+$("tab-day").onclick = () => show("day");
+$("tab-ov").onclick = () => show("ov");
+$("tab-list").onclick = () => show("list");
+$("d-back").onclick = () => show(prevView);
+
+function computeUsual() {
+  const v = trips.filter(t => t.distKm >= 3 && isFinite(t.kmPerL));
+  if (v.length < 5) return null;
+  const med = a => { const s = a.filter(isFinite).sort((x, y) => x - y); return s.length ? s[s.length >> 1] : NaN; };
+  const totD = v.reduce((s, t) => s + t.distKm, 0), totF = v.reduce((s, t) => s + t.fuelL, 0);
+  return {
+    kml: totD / totF,
+    brk10: med(v.map(t => t.brakes / t.distKm * 10)),
+    idleShare: med(v.map(t => t.idleS / (t.idleS + t.movingS))),
+    preIdle: med(v.filter(t => t.ct0 < 55).map(t => t.preIdleS)),
+    ctHw: med(v.filter(t => t.ct0 < 55).map(t => t.ctHw)),
+    kmlMin: med(v.map(t => t.kmPerL)) - 4, kmlMax: med(v.map(t => t.kmPerL)) + 4
+  };
+}
+
+// ---------- day diagnosis ----------
+function renderDay() {
+  const box = $("v-day");
+  if (!trips.length) {
+    box.innerHTML = `<div class="empty"><b>まず走行データを読み込んでください。</b><br>Car Scanner の「すべてエクスポート」で作った zip を、上の「走行データを読み込む」から選ぶだけです。読み込むと、いちばん新しい日の運転をここで診断します。</div>`;
+    return;
+  }
+  const days = [...new Set(trips.map(t => dayOf(t.startMs)))].sort().reverse();
+  if (!dayKey || !days.includes(dayKey)) dayKey = days[0];
+  const dt = trips.filter(t => dayOf(t.startMs) === dayKey).sort((a, z) => a.startMs - z.startMs);
+  const km = dt.reduce((s, t) => s + (t.distKm || 0), 0), L = dt.reduce((s, t) => s + (t.fuelL || 0), 0);
+  const kml = L > 0.05 ? km / L : NaN, durS = dt.reduce((s, t) => s + t.durS, 0);
+  const brakes = dt.reduce((s, t) => s + (t.brakes || 0), 0), idleS = dt.reduce((s, t) => s + (t.idleS || 0), 0), movS = dt.reduce((s, t) => s + (t.movingS || 0), 0);
+  const U = usual;
+  const diff = U && isFinite(kml) ? kml - U.kml : NaN;
+  const brk10 = km > 1 ? brakes / km * 10 : NaN, idleShare = idleS / Math.max(1, idleS + movS);
+
+  // state pills
+  const pill = (label, st) => `<span class="pill ${st}"><i></i>${label}</span>`;
+  const ecoSt = !isFinite(diff) ? "" : diff >= 0.5 ? "ok" : diff <= -1.5 ? "ng" : "mid";
+  const brkSt = !U || !isFinite(brk10) ? "" : brk10 <= U.brk10 * 1.1 ? "ok" : brk10 >= U.brk10 * 1.8 ? "ng" : "mid";
+  const cold = dt.find(t => t.ct0 < 55 && isFinite(t.preIdleS));
+  const warmSt = !cold ? "" : cold.preIdleS <= 75 ? "ok" : cold.preIdleS <= 150 ? "mid" : "ng";
+  const pills = [ecoSt && pill("燃費", ecoSt), brkSt && pill("ブレーキ", brkSt), warmSt && pill("暖機", warmSt)].filter(Boolean).join("");
+  const headline = !isFinite(diff) ? `${dt.length}本の走行` :
+    diff >= 0.5 ? `いつもより燃費が良い日でした` : diff <= -1.5 ? `いつもより燃費が悪い日でした` : `いつも通りの燃費でした`;
+
+  // advice
+  const adv = [];
+  const ex = U && isFinite(kml) ? dayExplain(dt) : null;
+  if (ex && Math.abs(diff) >= 0.5) {
+    const main = ex.filter(p => (diff < 0 ? p.eff < -0.15 : p.eff > 0.15)).slice(0, 2);
+    if (main.length) adv.push([diff < 0 ? "ng" : "ok", diff < 0 ? "燃費が下がった理由" : "燃費が良かった理由",
+      main.map(p => `${p.label}が${diff < 0 ? "多め" : "少なめ"}（<strong>${signed(p.eff)}</strong> km/L）`).join("、") + "。"]);
+  }
+  if (U && isFinite(brk10) && km >= 3) {
+    if (brk10 >= U.brk10 * 1.5 && brakes >= 3) {
+      const evs = dt.flatMap(t => t.events.filter(e => e.kind === "brake").map(e => clock(t.startSec + e.i).slice(0, 5)));
+      adv.push(["ng", "急ブレーキが多め", `<strong>${brakes}回</strong>（10kmあたり ${fmt(brk10)} 回、いつもは ${fmt(U.brk10)} 回）。${evs.slice(0, 5).join("、")}${evs.length > 5 ? " ほか" : ""}。車間を少し広めにとると減らせます。`]);
+    } else adv.push(["ok", "ブレーキはおだやか", `急ブレーキは <strong>${brakes}回</strong>（10kmあたり ${fmt(brk10)} 回、いつもは ${fmt(U.brk10)} 回）。`]);
+  }
+  if (cold) {
+    const mL = (cold.preIdleF || 0) * 1000;
+    const first = `発進前のアイドリングは <strong>${dur(cold.preIdleS)}</strong>（水温 ${fmt(cold.ct0, 0)}℃ → ${fmt(cold.ctDep, 0)}℃、燃料 約${fmt(mL, 0)}mL）。`;
+    const hw = isFinite(cold.ctHw) ? `60km/hに達したとき（高架の合流あたり）の水温は <strong>${fmt(cold.ctHw, 0)}℃</strong>` + (isFinite(cold.rpmCold) ? `、温まるまでの最高回転は ${fmt(cold.rpmCold, 0)}rpm。` : "。") : "";
+    if (cold.preIdleS > 75) adv.push([warmSt, "暖機は短くて大丈夫", first + hw + "オイルは走った方が早く温まるので、30秒〜1分で発進して、合流まではゆっくり走れば十分です。"]);
+    else adv.push(["ok", "暖機はちょうどいい", first + hw]);
+    if (cold.ctHw < 60 || cold.rpmCold > 3500) adv.push(["mid", "冷えたまま加速", `水温が低いうちに${cold.rpmCold > 3500 ? ` ${fmt(cold.rpmCold, 0)}rpm まで回しました` : "合流しました"}。冬の朝は、合流で踏み込みすぎないように。`]);
+  }
+  if (idleShare > (U ? U.idleShare + 0.08 : 0.3)) adv.push(["mid", "停車が長め", `走行時間の <strong>${fmt(idleShare * 100, 0)}%</strong> が停車でした（いつもは ${fmt(U ? U.idleShare * 100 : NaN, 0)}%）。停車中も1分で約15mLの燃料を使います。`]);
+  const wd = wxDay(dayKey), dw = dt.map(wxOf).filter(Boolean);
+  if (wxStats && dw.some(w => w.wet || w.snow) && isFinite(wxStats.wet)) {
+    const snow = dw.some(w => w.snow);
+    adv.push(["mid", snow ? "雪の中の運転" : "雨の中の運転", `${snow ? "雪" : "雨"}の日の燃費は、これまで平均 <strong>${fmt(wxStats.wet)} km/L</strong>（晴れ・くもりの日は ${fmt(wxStats.dry)} km/L、${wxStats.wetN} 走行から）。${wxStats.wet < wxStats.dry - 0.3 ? "エアコンや、流れがゆっくりになる分で下がりがちです。" : "これまでのところ、天気で燃費はほとんど変わっていません。"}${snow ? "路面が滑りやすいので、合流やブレーキは早めに。" : ""}`]);
+  }
+  const coldW = cold && wxOf(cold), cb = coldW && bandOf(coldW.temp);
+  if (coldW && cb && cb.n >= 3 && isFinite(cb.warm)) adv.push(["mid", `気温 ${fmt(coldW.temp, 0)}℃ の${new Date(cold.startMs).getHours() < 11 ? "朝" : "とき"}`, `${cb.label}の日は、水温が80℃になるまで中央値 <strong>${dur(cb.warm)}</strong>${isFinite(cb.ctHw) ? `、60km/hに達したときの水温は ${fmt(cb.ctHw, 0)}℃` : ""}（${cb.n} 走行から）。今日は ${isFinite(cold.warmS) && cold.warmS > 0 ? dur(cold.warmS) : "—"} でした。`]);
+  const shortT = dt.filter(t => t.distKm < 3 && t.distKm > 0.2);
+  if (shortT.length) adv.push(["mid", "短い走行", `3km未満の走行が ${shortT.length} 本ありました。エンジンが温まる前に終わるので、燃費は悪くなりがちです。`]);
+
+  box.innerHTML = `
+    <div class="days" id="days">${days.slice(0, 14).map(k => { const d = new Date(k + "T00:00"); return `<button type="button" data-k="${k}" aria-pressed="${k === dayKey}"><span>${d.getMonth() + 1}/${d.getDate()}</span><b>${"日月火水木金土"[d.getDay()]}</b></button>`; }).join("")}</div>
+    <div class="card">
+      <div class="eyebrow">${dayLabel(dayKey)}の運転・${dt.length}本${wd ? `・${wd.name} ${fmt(wd.lo, 0)}〜${fmt(wd.hi, 0)}℃` : ""}</div>
+      <div class="hero">
+        <div class="gauge"><canvas id="gauge"></canvas><div class="read"><b>${fmt(kml)}</b><span>km/L</span></div></div>
+        <div class="verdict">
+          <div class="big">${headline}</div>
+          ${isFinite(diff) ? `<div class="num ${diff >= 0 ? "good" : "bad"}" style="font-size:1.05rem;font-weight:700">いつもの ${fmt(U.kml)} km/L より ${signed(diff)}</div>` : ""}
+          <div class="pills">${pills}</div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><b>${fmt(km)} km</b><span>距離</span></div>
+        <div class="kpi"><b>${fmt(L, 2)} L</b><span>燃料</span></div>
+        <div class="kpi"><b>${dur(durS)}</b><span>運転時間</span></div>
+        <div class="kpi"><b>${brakes} 回</b><span>急ブレーキ</span></div>
+      </div>
+    </div>
+    ${adv.length ? `<div class="card"><h3>今日のひとこと</h3><ul class="advice">${adv.map(([st, h, p]) => `<li class="${st}"><div><h4>${h}</h4><p>${p}</p></div></li>`).join("")}</ul></div>` : ""}
+    <div class="card"><h3>この日の走行</h3><div class="tripcards">${dt.map((t, i) => {
+      const e = explain(t);
+      return `<button type="button" class="tc" data-id="${encodeURIComponent(t.id)}"><span class="t">${clock(t.startSec).slice(0, 5)}</span><span class="m">${fmt(t.distKm)} km・${dur(t.durS)}・最高 ${fmt(t.maxKmh, 0)} km/h${(w => w ? `・${w.name} ${fmt(w.temp, 0)}℃` : "")(wxOf(t))}</span>
+        <span class="e">${fmt(t.kmPerL)}<small class="${e && e.diff >= 0 ? "good" : "bad"}">${e ? signed(e.diff) : ""}</small></span><canvas data-i="${i}"></canvas></button>`; }).join("")}</div>
+      <p class="note">押すと、その走行の診断とグラフを開きます。</p></div>`;
+  box.querySelectorAll("#days button").forEach(b => b.onclick = () => { dayKey = b.dataset.k; renderDay(); });
+  box.querySelectorAll(".tc").forEach(b => b.onclick = () => openTrip(decodeURIComponent(b.dataset.id)));
+  box.querySelectorAll(".tc canvas").forEach(cv => spark(cv, dt[+cv.dataset.i].spark || []));
+  gauge($("gauge"), kml, U);
+  const pressed = box.querySelector('#days [aria-pressed="true"]'); pressed && pressed.scrollIntoView({ inline: "nearest", block: "nearest" });
+}
+function dayExplain(dt) {
+  if (!model) return null;
+  const km = dt.reduce((s, t) => s + t.distKm, 0);
+  return FACTORS.map((F, j) => ({ label: F[1], eff: dt.reduce((s, t) => s + model.coef[j] * (F[2](t) - model.avgX[j]) * t.distKm, 0) / Math.max(km, 0.1) }))
+    .sort((a, z) => Math.abs(z.eff) - Math.abs(a.eff));
+}
+function gauge(cv, val, U) {
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const cy = H - 18, cx = W / 2, r = Math.min(W / 2 - 18, cy - 24);
+  const lo = U ? Math.floor(U.kmlMin) : 10, hi = U ? Math.ceil(U.kmlMax) : 26;
+  const ang = v => Math.PI + Math.max(0, Math.min(1, (v - lo) / (hi - lo))) * Math.PI;
+  g.lineCap = "round"; g.lineWidth = 14;
+  g.strokeStyle = css("--line"); g.beginPath(); g.arc(cx, cy, r, Math.PI, 2 * Math.PI); g.stroke();
+  if (isFinite(val)) {
+    g.strokeStyle = U && val < U.kml - 0.5 ? css("--danger") : U && val > U.kml + 0.5 ? css("--good") : css("--accent");
+    g.beginPath(); g.arc(cx, cy, r, Math.PI, Math.max(ang(val), Math.PI + 0.02)); g.stroke();
+  }
+  g.fillStyle = css("--muted"); g.font = `11px ${css("--font-num")}`; g.textAlign = "center"; g.textBaseline = "top";
+  g.fillText(lo, cx - r, cy + 10); g.fillText(hi, cx + r, cy + 10);
+  if (U) { // where "usual" sits on the dial
+    const a = ang(U.kml); g.strokeStyle = css("--fg"); g.lineWidth = 2.5; g.lineCap = "butt";
+    g.beginPath(); g.moveTo(cx + Math.cos(a) * (r - 11), cy + Math.sin(a) * (r - 11)); g.lineTo(cx + Math.cos(a) * (r + 11), cy + Math.sin(a) * (r + 11)); g.stroke();
+    g.fillStyle = css("--fg"); g.font = `10px ${css("--font-body")}`; g.textBaseline = "bottom";
+    g.fillText(`いつも ${fmt(U.kml)}`, cx + Math.cos(a) * (r + 14), cy + Math.sin(a) * (r + 14));
+  }
+}
+function spark(cv, a) {
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!a.length) return;
+  const mx = Math.max(100, ...a), X = i => i / (a.length - 1) * W, Y = v => H - 1 - v / mx * (H - 3);
+  g.beginPath(); g.moveTo(0, H); a.forEach((v, i) => g.lineTo(X(i), Y(v))); g.lineTo(W, H); g.closePath();
+  g.fillStyle = css("--accent-soft"); g.fill();
+  g.beginPath(); a.forEach((v, i) => i ? g.lineTo(X(i), Y(v)) : g.moveTo(0, Y(v))); g.strokeStyle = css("--accent"); g.lineWidth = 1.2; g.stroke();
+  g.setLineDash([3, 3]); g.strokeStyle = css("--line"); g.beginPath(); g.moveTo(0, Y(60) + .5); g.lineTo(W, Y(60) + .5); g.stroke(); g.setLineDash([]);
+}
+
+// ---------- list ----------
+function renderList() {
+  const box = $("trips");
+  if (!trips.length) { box.className = ""; box.innerHTML = `<div class="empty">まだ走行がありません。上の「走行データを読み込む」から選んでください。</div>`; return; }
+  box.className = "trips"; box.innerHTML = "";
+  let mk = "";
+  for (const t of trips) {
+    const k = monthKey(t.startMs);
+    if (k !== mk) { mk = k; const h = document.createElement("div"); h.className = "month-h"; h.textContent = `${k.slice(0, 4)}年 ${+k.slice(5)}月`; box.appendChild(h); }
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "trip";
+    b.setAttribute("aria-current", current && current.id === t.id ? "true" : "false");
+    const ex = explain(t);
+    const dev = ex ? `<span class="${ex.diff >= 0 ? "good" : "bad"}">平均比 ${signed(ex.diff)}</span>` : "";
+    b.innerHTML = `<span class="when">${dateStr(t.startMs)}</span><span class="eco">${fmt(t.kmPerL)} km/L</span>
+      <span class="meta"><span>${fmt(t.distKm)} km</span><span>${dur(t.durS)}</span><span>最高 ${fmt(t.maxKmh, 0)} km/h</span>${dev}</span>`;
+    b.onclick = () => openTrip(t.id);
+    box.appendChild(b);
+  }
+}
+
+// ---------- overview ----------
+function renderOverview() {
+  const box = $("v-ov");
+  const v = trips.filter(t => t.distKm >= 1 && isFinite(t.kmPerL));
+  if (v.length < 3) { box.innerHTML = `<div class="empty">走行が3本以上たまると、ここに全体のまとめ（燃費の傾向と、燃費を左右しているもの）が出ます。</div>`; return; }
+  const km = v.reduce((s, t) => s + t.distKm, 0), L = v.reduce((s, t) => s + t.fuelL, 0), hrs = v.reduce((s, t) => s + t.durS, 0) / 3600;
+  const stats = [[`${v.length} 本`, "走行"], [`${fmt(km, 0)} km`, "距離"], [`${fmt(L, 1)} L`, "燃料"], [`${fmt(km / L)} km/L`, "平均燃費"], [`${fmt(hrs, 0)} 時間`, "運転時間"]];
+  const fnd = [];
+  if (model) {
+    const eff = FACTORS.map((F, j) => ({ label: F[1], per: model.coef[j] })).filter(e => e.per < 0);
+    const idle = eff.find(e => e.label === "停車の割合"), fast = eff.find(e => e.label === "80km/h以上の割合");
+    if (idle) fnd.push(["最大の要因", `燃費をいちばん左右しているのは<strong>停車の時間</strong>です。走行時間に占める停車の割合が10%増えると、燃費は約 <strong>${fmt(-idle.per / 10)} km/L</strong> 下がります（${model.n} 走行から推定）。`]);
+    if (fast) fnd.push(["速度", `80km/h以上で走る距離の割合が10%増えると、燃費は約 <strong>${fmt(-fast.per / 10)} km/L</strong> 下がります。`]);
+  }
+  const short = v.filter(t => t.distKm < 3), rest = v.filter(t => t.distKm >= 3);
+  const kmlOf = a => a.reduce((s, t) => s + t.distKm, 0) / a.reduce((s, t) => s + t.fuelL, 0);
+  if (short.length >= 3) fnd.push(["短い走行", `3km未満の走行（${short.length}本）は平均 <strong>${fmt(kmlOf(short))} km/L</strong>、それ以外は ${fmt(kmlOf(rest))} km/L。エンジンが暖まる前に終わるためです。`]);
+  const B = BANDS.map(() => ({ f: 0, d: 0 }));
+  v.forEach(t => t.bands && t.bands.forEach((b, i) => { B[i].f += b.f; B[i].d += b.d; }));
+  const bk = B.map((b, i) => ({ label: BANDS[i][2], kml: b.f > 0.05 && b.d > 1 ? b.d / b.f : NaN })).filter(b => isFinite(b.kml));
+  const best = [...bk].sort((a, z) => z.kml - a.kml)[0], idleF = v.reduce((s, t) => s + t.idleF, 0);
+  if (best) fnd.push(["速度帯", `いちばん燃費が良いのは <strong>${best.label}km/h</strong> で ${fmt(best.kml)} km/L。停車中に使った燃料は合計 ${fmt(idleF, 1)} L（全体の ${fmt(idleF / L * 100, 0)}%）です。`]);
+  const coldT = v.filter(t => t.ct0 < 55 && isFinite(t.preIdleS));
+  if (coldT.length >= 5) {
+    const pf = coldT.reduce((s, t) => s + (t.preIdleF || 0), 0), ps = coldT.map(t => t.preIdleS).sort((a, z) => a - z);
+    fnd.push(["暖機", `冷えた状態からの発進は ${coldT.length} 回。発進前のアイドリングは中央値 <strong>${dur(ps[ps.length >> 1])}</strong>、合計で約 ${fmt(pf, 1)} L を使いました。`]);
+  }
+  if (wxStats) {
+    const bs = wxStats.bands.filter(b => isFinite(b.kml));
+    fnd.push(["天気", (isFinite(wxStats.wet) ? `雨・雪の日は <strong>${fmt(wxStats.wet)} km/L</strong>、晴れ・くもりの日は ${fmt(wxStats.dry)} km/L（雨・雪 ${wxStats.wetN} 走行）。` : "") +
+      (bs.length >= 2 ? `気温別では ${bs.map(b => `${b.label} ${fmt(b.kml)}`).join("、")} km/L。` : "") +
+      (bs.some(b => isFinite(b.warm)) ? `<br>水温が80℃になるまでの時間（冷えた状態からの発進）は ${bs.filter(b => isFinite(b.warm)).map(b => `${b.label} <strong>${dur(b.warm)}</strong>`).join("、")}。` : "")]);
+  }
+  const months = new Map();
+  for (const t of v) { const k = monthKey(t.startMs); const m = months.get(k) || { km: 0, L: 0, harsh: 0 }; m.km += t.distKm; m.L += t.fuelL; m.harsh += t.brakes; months.set(k, m); }
+  const ms = [...months.entries()].sort((a, z) => a[0] < z[0] ? -1 : 1).map(([k, m]) => ({ k, ...m, kml: m.km / m.L, b10: m.harsh / m.km * 10 }));
+  if (ms.length >= 3) {
+    const a = ms.slice(0, Math.ceil(ms.length / 2)), z = ms.slice(Math.ceil(ms.length / 2));
+    const avg = (arr, key) => arr.reduce((s, m) => s + m[key] * m.km, 0) / arr.reduce((s, m) => s + m.km, 0);
+    fnd.push(["推移", `前半（${+a[0].k.slice(5)}〜${+a[a.length - 1].k.slice(5)}月）と後半（${+z[0].k.slice(5)}〜${+z[z.length - 1].k.slice(5)}月）で、燃費は ${fmt(avg(a, "kml"))} → <strong>${fmt(avg(z, "kml"))} km/L</strong>、急ブレーキは10kmあたり ${fmt(avg(a, "b10"))} → <strong>${fmt(avg(z, "b10"))} 回</strong>。`]);
+  }
+  const sorted = v.filter(t => t.distKm >= 3).sort((a, z) => z.kmPerL - a.kmPerL);
+  const reason = t => { const ex = explain(t); if (!ex) return ""; const p = ex.parts.filter(p => (ex.diff < 0 ? p.eff < 0 : p.eff > 0))[0]; return p ? `（主な理由：${p.label}が${ex.diff < 0 ? "多い" : "少ない"}）` : ""; };
+  const tripLink = t => `<button type="button" class="linkish" data-id="${encodeURIComponent(t.id)}">${dateStr(t.startMs)}</button>`;
+  if (sorted.length >= 6) {
+    fnd.push(["良かった", sorted.slice(0, 2).map(t => `${tripLink(t)} ${fmt(t.kmPerL)} km/L${reason(t)}`).join("<br>")]);
+    fnd.push(["悪かった", sorted.slice(-2).reverse().map(t => `${tripLink(t)} ${fmt(t.kmPerL)} km/L${reason(t)}`).join("<br>")]);
+  }
+  box.innerHTML = `<div class="stats">${stats.map(([a, b]) => `<div class="stat"><b>${a}</b><span>${b}</span></div>`).join("")}</div>
+    <div class="card"><h3>全体の診断</h3>${fnd.map(([tag, html]) => `<div class="finding"><span class="tag">${tag}</span><p>${html}</p></div>`).join("")}</div>
+    <div class="card ov-chart"><h3>月ごとの燃費と距離</h3><div class="legend"><span><i style="background:var(--accent)"></i>燃費（km/L）</span><span><i style="background:var(--muted);opacity:.5"></i>距離（いちばん長い月 ${fmt(Math.max(...ms.map(m => m.km)), 0)} km）</span></div><canvas id="ov-month"></canvas></div>
+    <div class="card ov-chart"><h3>月ごとの急ブレーキ（10kmあたり）</h3><canvas id="ov-brake"></canvas></div>
+    <p class="note">「いつも」「平均」は距離で重みづけした全走行の燃費です。原因の推定は、停車・高速・暖機・急な加減速の4つと燃費の関係を、この端末にある走行から当てはめたものです。</p>`;
+  box.querySelectorAll("button.linkish").forEach(b => b.onclick = () => openTrip(decodeURIComponent(b.dataset.id)));
+  monthChart($("ov-month"), ms, "kml", "km");
+  monthChart($("ov-brake"), ms, "b10", null);
+}
+function monthChart(cv, ms, key, barKey) {
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const padL = 34, padR = 8, padB = 18, pw = W - padL - padR, ph = H - padB - 14;
+  const vals = ms.map(m => m[key]); let lo = Math.min(...vals), hi = Math.max(...vals);
+  const span = hi - lo || 1; lo -= span * .25; hi += span * .2; if (key === "b10") lo = 0;
+  const X = i => padL + (i + .5) * pw / ms.length, Y = v => 14 + (1 - (v - lo) / (hi - lo)) * ph;
+  g.font = `10px ${css("--font-num")}`; g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.lineWidth = 1;
+  for (const t of [lo + (hi - lo) * .2, lo + (hi - lo) * .55, lo + (hi - lo) * .9]) {
+    const y = Math.round(Y(t)) + .5; g.beginPath(); g.moveTo(padL, y); g.lineTo(W - padR, y); g.stroke();
+    g.textAlign = "right"; g.textBaseline = "middle"; g.fillText(fmt(t, 1), padL - 4, y);
+  }
+  if (barKey) {
+    const bmax = Math.max(...ms.map(m => m[barKey])), bw = Math.min(28, pw / ms.length * .6);
+    g.fillStyle = css("--muted"); g.globalAlpha = .25;
+    ms.forEach((m, i) => { const h = m[barKey] / bmax * ph * .8; g.fillRect(X(i) - bw / 2, 14 + ph - h, bw, h); });
+    g.globalAlpha = 1;
+  }
+  g.textAlign = "center"; g.textBaseline = "alphabetic"; g.fillStyle = css("--muted");
+  ms.forEach((m, i) => g.fillText(`${+m.k.slice(5)}月`, X(i), H - 4));
+  g.strokeStyle = css("--accent"); g.lineWidth = 2; g.beginPath();
+  ms.forEach((m, i) => i ? g.lineTo(X(i), Y(m[key])) : g.moveTo(X(i), Y(m[key]))); g.stroke();
+  g.fillStyle = css("--accent"); g.textBaseline = "bottom";
+  ms.forEach((m, i) => { g.beginPath(); g.arc(X(i), Y(m[key]), 3, 0, 7); g.fill(); g.fillText(fmt(m[key]), X(i), Y(m[key]) - 5); });
+}
+
+// ---------- one trip ----------
+async function openTrip(id) {
+  current = trips.find(t => t.id === id);
+  if (!current) return;
+  show("detail"); window.scrollTo(0, 0);
+  const t = current;
+  $("d-title").textContent = `${dateStr(t.startMs)} の走行`;
+  const stats = [
+    [fmt(t.distKm, 2) + " km", "距離"], [dur(t.durS), "時間"], [fmt(t.kmPerL) + " km/L", "燃費"],
+    [fmt(t.fuelL, 2) + " L", "使った燃料"], [fmt(t.distKm / (t.durS / 3600)) + " km/h", "平均速度"], [fmt(t.maxKmh, 0) + " km/h", "最高速度"]
+  ];
+  $("d-stats").innerHTML = stats.map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
+  renderDiag(t);
+  $("d-charts").innerHTML = `<p class="note">グラフを読み込み中…</p>`;
+  curSeries = await getSeries(id);
+  if (current !== t) return;
+  if (!curSeries) { $("d-charts").innerHTML = `<p class="note">この走行のグラフは、この端末にもクラウドにもありません。元の CSV か zip を読み込み直すと出ます。</p>`; return; }
+  const avail = t.pids.filter(p => curSeries[p.name]);
+  const pref = savedSel() || DEFAULT_PIDS;
+  selected = new Set(pref.filter(n => curSeries[n]));
+  if (!selected.size) avail.slice(0, 4).forEach(p => selected.add(p.name));
+  $("d-chips").innerHTML = "";
+  avail.forEach((p, k) => {
+    const l = document.createElement("label"); l.className = "chip";
+    l.innerHTML = `<input type="checkbox" id="pid-${k}"><span></span>`;
+    l.querySelector("span").textContent = p.unit ? `${p.name}（${p.unit}）` : p.name;
+    const cb = l.querySelector("input"); cb.checked = selected.has(p.name);
+    cb.onchange = () => { cb.checked ? selected.add(p.name) : selected.delete(p.name); saveSel(); drawCharts(); };
+    $("d-chips").appendChild(l);
+  });
+  cursor = -1;
+  drawCharts();
+}
+
+function renderDiag(t) {
+  const box = $("d-diag"), F = [];
+  if (!isFinite(t.distKm)) { box.hidden = true; return; }
+  box.hidden = false;
+  const ex = explain(t);
+  if (ex) {
+    const main = ex.parts.filter(p => (ex.diff < 0 ? p.eff < -0.1 : p.eff > 0.1)).slice(0, 2);
+    const why = main.length ? `主な理由は${main.map(p => `${p.label}が${(ex.diff < 0) ? "多い" : "少ない"}（${signed(p.eff)} km/L）`).join("、")}ことです。` : "目立った理由は見当たりません。";
+    F.push(["いつもと比べて", `平均 ${fmt(model.avgKml)} km/L に対して <strong class="${ex.diff >= 0 ? "good" : "bad"}">${signed(ex.diff)} km/L</strong>。${why}`]);
+  }
+  const tw = wxOf(t);
+  if (tw) F.push(["天気", `${tw.name}・気温 <strong>${fmt(tw.temp, 0)}℃</strong>${tw.p >= 0.1 ? `・走行中の降水 ${fmt(tw.p, 1)}mm` : ""}。` + (wxStats && (tw.wet || tw.snow) && isFinite(wxStats.wet) ? `雨・雪の日の平均は ${fmt(wxStats.wet)} km/L です。` : "")]);
+  if (t.hasFuel && t.fuelL > 0) {
+    const fastShare = t.fastF / t.fuelL, best = t.bands.map((b, i) => ({ label: BANDS[i][2], kml: b.f > 0.01 && b.d > 0.2 ? b.d / b.f : NaN })).filter(b => isFinite(b.kml)).sort((a, z) => z.kml - a.kml)[0];
+    if (fastShare > .25) F.push(["燃料", `80km/h以上で燃料の <strong>${fmt(fastShare * 100, 0)}%</strong> を使いました（距離では ${fmt(t.fastD / t.distKm * 100, 0)}%）。` + (best ? `いちばん燃費が良かったのは ${best.label}km/h の <strong>${fmt(best.kml)} km/L</strong>。` : "")]);
+    else if (best) F.push(["燃料", `いちばん燃費が良かったのは ${best.label}km/h の <strong>${fmt(best.kml)} km/L</strong> でした。`]);
+  }
+  if (isFinite(t.ct0)) {
+    const pre = isFinite(t.preIdleS) && t.ct0 < 55 ? `発進前のアイドリングは ${dur(t.preIdleS)}（${fmt(t.ct0, 0)}℃ → ${fmt(t.ctDep, 0)}℃）。` : "";
+    if (t.ct0 < 70 && t.warmS > 0 && t.warmF > 0.01) {
+      const k1 = t.warmD / t.warmF, k2 = (t.distKm - t.warmD) / (t.fuelL - t.warmF);
+      F.push(["暖機", pre + `水温が80℃になるまで <strong>${dur(t.warmS)}</strong>。その間の燃費は <strong>${fmt(k1)} km/L</strong>、暖まってからは ${fmt(k2)} km/L でした。`]);
+    } else if (t.warmS < 0) F.push(["暖機", pre + `水温が最後まで80℃に届きませんでした（最高 ${fmt(t.ctMax, 0)}℃）。短い走行は燃費が悪くなりがちです。`]);
+  }
+  if (t.idleS > 30 && t.hasFuel) F.push(["停車", `止まっていた時間は <strong>${dur(t.idleS)}</strong>、その間に ${fmt(t.idleF, 2)} L（全体の <strong>${fmt(t.idleF / t.fuelL * 100, 0)}%</strong>）を使いました。`]);
+  if (t.cut > 0) F.push(["惰性", `アクセルを離して燃料ゼロで走っていた時間は <strong>${dur(t.cut)}</strong> です。早めにアクセルを離すほど、ここが伸びます。`]);
+  const per = t.distKm > 1 ? `（10kmあたり ${fmt((t.brakes + t.accels) / t.distKm * 10)} 回）` : "";
+  F.push(["急な操作", t.events.length ? `急ブレーキ <strong>${t.brakes}回</strong>、急加速 <strong>${t.accels}回</strong>${per}。下の時刻を押すとその場面に移動します。` : "3秒で24km/h以上の急な加減速はありませんでした。"]);
+  if (t.rpm4k > 10) F.push(["回転数", `4,000rpmを超えていた時間は <strong>${dur(t.rpm4k)}</strong> でした。`]);
+
+  const maxShare = Math.max(...t.bands.map(b => Math.max(b.f / t.fuelL, b.d / t.distKm)).filter(isFinite), .01);
+  const bands = t.hasFuel && t.fuelL > 0 ? `<div class="legend"><span><i style="background:var(--accent)"></i>燃料の割合</span><span><i style="background:var(--muted);opacity:.5"></i>距離の割合</span><span>右：その速度帯の燃費</span></div>
+    <div class="bands">${t.bands.map((b, i) => { const k = b.f > 0.01 && b.d > 0.2 ? b.d / b.f : NaN; return `<span class="lbl">${BANDS[i][2]}${i ? " km/h" : ""}</span>
+      <span class="bar"><i class="f" style="width:${b.f / t.fuelL / maxShare * 100}%"></i><i class="d" style="width:${b.d / t.distKm / maxShare * 100}%"></i></span>
+      <span class="kml">${isFinite(k) ? fmt(k) + " km/L" : "—"}</span>`; }).join("")}</div>` : "";
+  const shown = t.events.slice(0, 40);
+  const ev = shown.length ? `<div class="events">${shown.map((e, k) =>
+    `<button type="button" class="${e.kind}" data-k="${k}">${clock(t.startSec + e.i).slice(0, 5)} ${e.kind === "brake" ? "減速" : "加速"} ${fmt(e.peak, 0)}km/h/秒</button>`).join("")}${t.events.length > 40 ? `<span class="note">ほか ${t.events.length - 40} 件</span>` : ""}</div>` : "";
+  const extra = { "燃料": bands, "急な操作": ev };
+  box.innerHTML = `<h3>この走行の診断</h3>` + F.map(([tag, html]) =>
+    `<div class="finding"><span class="tag">${tag}</span><p>${html}</p></div>` + (extra[tag] || "")).join("");
+  box.querySelectorAll(".events button").forEach(b => b.onclick = () => {
+    if (!curSeries) return;
+    const e = shown[+b.dataset.k];
+    for (const n of [SP, "加速"]) if (curSeries[n]) selected.add(n);
+    cursor = e.i; drawCharts();
+    $("d-readout").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  });
+}
+
+function drawCharts() {
+  const box = $("d-charts"); box.innerHTML = ""; charts = [];
+  for (const p of current.pids) {
+    if (!selected.has(p.name) || !curSeries[p.name]) continue;
+    const el = document.createElement("div"); el.className = "chart";
+    el.innerHTML = `<div class="chart-head"><span></span><span class="val"></span></div><canvas></canvas>`;
+    el.querySelector(".chart-head span").textContent = p.unit ? `${p.name}（${p.unit}）` : p.name;
+    box.appendChild(el);
+    const c = { el, canvas: el.querySelector("canvas"), val: el.querySelector(".val"), data: curSeries[p.name], unit: p.unit };
+    charts.push(c); bindPointer(c.canvas);
+  }
+  paintAll();
+}
+function paintAll() { for (const c of charts) paint(c); updateReadout(); }
+function paint(c) {
+  const dpr = window.devicePixelRatio || 1, W = c.canvas.clientWidth, H = c.canvas.clientHeight;
+  c.canvas.width = W * dpr; c.canvas.height = H * dpr;
+  const g = c.canvas.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const d = c.data, n = d.length;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < n; i++) { const x = d[i]; if (x < lo) lo = x; if (x > hi) hi = x; }
+  if (!isFinite(lo)) return;
+  if (hi === lo) { hi += 1; lo -= 1; }
+  const padL = 40, padB = 14, plotW = W - padL, plotH = H - padB - 4;
+  const X = i => padL + (i / (n - 1)) * plotW, Y = v => 4 + (1 - (v - lo) / (hi - lo)) * plotH;
+  c.X = X; c.padL = padL; c.plotW = plotW;
+  g.font = `10px ${css("--font-num")}`; g.fillStyle = css("--muted"); g.strokeStyle = css("--line"); g.lineWidth = 1;
+  for (const v of [lo, (lo + hi) / 2, hi]) {
+    const y = Math.round(Y(v)) + .5; g.beginPath(); g.moveTo(padL, y); g.lineTo(W, y); g.stroke();
+    g.textAlign = "right"; g.textBaseline = "middle"; g.fillText(fmt(v, Math.abs(hi - lo) < 5 ? 2 : 0), padL - 4, Math.min(Math.max(y, 6), plotH));
+  }
+  g.textAlign = "center"; g.textBaseline = "alphabetic";
+  const stepS = n > 3 * 3600 ? 1800 : n > 3600 ? 900 : 300;
+  for (let s = Math.ceil(current.startSec / stepS) * stepS; s - current.startSec < n; s += stepS) {
+    const x = X(s - current.startSec); g.fillText(clock(s).slice(0, 5), Math.min(Math.max(x, padL + 14), W - 14), H - 2);
+  }
+  const cols = Math.max(1, Math.floor(plotW)), per = n / cols;
+  g.beginPath(); let started = false;
+  for (let cx = 0; cx < cols; cx++) {
+    let mn = Infinity, mx = -Infinity;
+    for (let i = Math.floor(cx * per); i < Math.min(n, Math.floor((cx + 1) * per) + 1); i++) { const v = d[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
+    if (!isFinite(mn)) { started = false; continue; }
+    const x = padL + cx;
+    if (!started) { g.moveTo(x, Y(mx)); started = true; } else g.lineTo(x, Y(mx));
+    if (mn !== mx) g.lineTo(x, Y(mn));
+  }
+  g.strokeStyle = css("--accent"); g.lineWidth = 1.25; g.stroke();
+  if (cursor >= 0 && cursor < n) {
+    const x = Math.round(X(cursor)) + .5; g.strokeStyle = css("--sel"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, plotH + 4); g.stroke();
+    const v = d[cursor]; if (isFinite(v)) { g.fillStyle = css("--sel"); g.beginPath(); g.arc(x, Y(v), 3, 0, 7); g.fill(); }
+  }
+}
+function updateReadout() {
+  if (cursor < 0) { $("d-readout").textContent = "グラフをなぞると、その時点の値が出ます"; for (const c of charts) c.val.textContent = ""; return; }
+  $("d-readout").textContent = `${clock(current.startSec + cursor)}（開始から ${dur(cursor)}）`;
+  for (const c of charts) { const v = c.data[cursor]; c.val.textContent = isFinite(v) ? `${fmt(v, Math.abs(v) < 10 ? 2 : 0)} ${c.unit}` : "—"; }
+}
+function bindPointer(cv) {
+  const move = e => {
+    const c = charts.find(k => k.canvas === cv); if (!c || !c.X) return;
+    const r = cv.getBoundingClientRect(), n = c.data.length;
+    cursor = Math.max(0, Math.min(n - 1, Math.round((e.clientX - r.left - c.padL) / c.plotW * (n - 1))));
+    paintAll();
+  };
+  cv.addEventListener("pointerdown", move);
+  cv.addEventListener("pointermove", e => { if (e.pointerType === "mouse" || e.buttons) move(e); });
+}
+
+// ---------- import ----------
+let wxStats = null;
+function computeWxStats() {
+  const v = trips.filter(t => t.distKm >= 3 && isFinite(t.kmPerL)).map(t => ({ t, w: wxOf(t) })).filter(x => x.w);
+  if (v.length < 10) return null;
+  const kml = a => { const d = a.reduce((s, x) => s + x.t.distKm, 0), f = a.reduce((s, x) => s + x.t.fuelL, 0); return f > 0 ? d / f : NaN; };
+  const med = a => { const s = a.filter(isFinite).sort((x, y) => x - y); return s.length ? s[s.length >> 1] : NaN; };
+  const wet = v.filter(x => x.w.wet || x.w.snow), dry = v.filter(x => !x.w.wet && !x.w.snow);
+  const TB = [[-99, 5, "5℃未満"], [5, 15, "5〜15℃"], [15, 25, "15〜25℃"], [25, 99, "25℃以上"]];
+  const bands = TB.map(([a, b, label]) => { const g = v.filter(x => x.w.temp >= a && x.w.temp < b);
+    const c = g.filter(x => x.t.ct0 < 55 && isFinite(x.t.preIdleS));
+    return { label, a, b, n: g.length, kml: g.length >= 3 ? kml(g) : NaN, warm: c.length >= 3 ? med(c.map(x => x.t.warmS).filter(s => s > 0)) : NaN, ctHw: c.length >= 3 ? med(c.map(x => x.t.ctHw)) : NaN, ct0: c.length >= 3 ? med(c.map(x => x.t.ct0)) : NaN }; });
+  return { n: v.length, wetN: wet.length, wet: wet.length >= 3 ? kml(wet) : NaN, dry: kml(dry), bands };
+}
+const bandOf = temp => wxStats && wxStats.bands.find(b => temp >= b.a && temp < b.b);
+function refreshModels() { model = fitModel(trips); usual = computeUsual(); wxStats = computeWxStats(); }
+$("file").addEventListener("change", async e => {
+  const files = [...e.target.files]; e.target.value = "";
+  if (!files.length) return;
+  let ok = 0, skip = 0, saved = 0, newest = null, cloudErr = "", wxN = 0; const ng = [];
+  const have = new Set(trips.map(t => t.id));
+  const jobs = [];
+  for (const f of files) {
+    try {
+      if (/\.json$/i.test(f.name)) { wxN += await wxImport(await f.text()); continue; }
+      if (/\.zip$/i.test(f.name)) zipEntries(await f.arrayBuffer()).forEach(en => jobs.push(en));
+      else jobs.push({ name: f.name, read: () => f.text() });
+    } catch (err) { ng.push(err.message || f.name); }
+  }
+  const prog = $("prog"); prog.hidden = false;
+  for (let k = 0; k < jobs.length; k++) {
+    const en = jobs[k];
+    $("status").textContent = `${k + 1} / ${jobs.length} 件目を読み込み・保存中…`;
+    prog.firstElementChild.style.width = `${(k + 1) / jobs.length * 100}%`;
+    if (have.has(en.name)) { skip++; continue; }
+    try {
+      await new Promise(r => setTimeout(r));
+      const { sum, series } = buildTrip(en.name, parseRaw(en.name, await en.read()));
+      await putTrip(sum, series); have.add(sum.id); ok++;
+      if (!newest || sum.startMs > newest) newest = sum.startMs;
+      try { if (await cloudPut(sum, series)) { await markCloud(sum); saved++; } }
+      catch (err) { console.warn(err); cloudErr = err && err.code === "quota_exceeded" ? "クラウドの保存容量がいっぱいです" : "クラウドに保存できなかった走行があります"; }
+    } catch (err) { console.warn(err); ng.push(err.message || en.name); }
+  }
+  prog.hidden = true;
+  trips = await allTrips(); refreshModels();
+  if (saved) cloudState.count += saved;
+  $("status").textContent = !jobs.length && wxN ? `天気を ${wxN} 日分取り込みました。` : (ok ? `新しい走行を ${ok} 件取り込みました` : "新しい走行はありませんでした") + (skip ? `（${skip} 件は取り込み済み）` : "") + (ng.length ? `。読めなかったもの ${ng.length} 件` : "") + (cloudErr ? `。${cloudErr}` : "") + (wxN ? `。天気を ${wxN} 日分取り込みました` : "");
+  cloudBadge();
+  dayKey = newest ? dayOf(newest) : null;
+  show("day");
+  wxBadge();
+});
+$("d-delete").addEventListener("click", async () => {
+  const b = $("d-delete");
+  if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "もう一度押すと削除します"; setTimeout(() => { b.dataset.armed = ""; b.textContent = "この走行を削除"; }, 4000); return; }
+  b.dataset.armed = ""; b.textContent = "この走行を削除";
+  await delTrip(current.id); current = null;
+  trips = await allTrips(); refreshModels(); show(prevView);
+});
+const repaint = () => { if (view === "detail" && current) paintAll(); else show(view); };
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(repaint, 150); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", repaint);
+document.fonts && document.fonts.ready.then(() => { if (view !== "detail") show(view); });
+
+function cloudBadge() {
+  const el = $("cloud"), local = trips.filter(t => !t.cloud).length;
+  if (!cloudState.ok) { el.innerHTML = cloudState.error ? "クラウドに接続できませんでした。この端末の中だけに保存しています。" : "この端末の中だけに保存しています。"; return; }
+  el.innerHTML = `☁ ${trips.filter(t => t.cloud).length} 件の走行をクラウドに保存済み。次からは新しい走行だけ読み込めば大丈夫です。` +
+    (local ? ` <button type="button" class="linkish" id="up-local">この端末だけにある ${local} 件も保存する</button>` : "");
+  const b = $("up-local");
+  if (b) b.onclick = async () => {
+    b.disabled = true; let n = 0;
+    for (const t of trips.filter(t => !t.cloud)) {
+      const s = await getSeries(t.id); if (!s) continue;
+      try { if (await cloudPut(t, s)) { await markCloud(t); n++; el.firstChild.textContent = `☁ 保存中… ${n} 件`; } } catch (e) { console.warn(e); break; }
+    }
+    trips = await allTrips(); cloudBadge();
+  };
+}
+(async () => {
+  wxLoadLocal();
+  trips = await allTrips(); refreshModels(); show("day"); wxBadge();
+  await syncFromCloud(); await wxLoadCloud();
+  trips = await allTrips(); refreshModels(); show(view === "detail" ? "day" : view); cloudBadge(); wxBadge();
+  if (await recountHarsh()) { trips = await allTrips(); refreshModels(); if (view !== "detail") show(view); }
+})();
+</script>
