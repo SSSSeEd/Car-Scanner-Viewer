@@ -176,6 +176,7 @@ details[open] summary { margin-bottom: 8px; }
 .chart-head .val { font-family: var(--font-num); font-weight: 700; color: var(--accent); }
 .chart canvas { display: block; width: 100%; height: 96px; touch-action: pan-y; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+body.simple #cloud, body.simple #wx { display: none; }
 </style>
 
 <header class="cluster">
@@ -186,6 +187,7 @@ details[open] summary { margin-bottom: 8px; }
         <input id="file" type="file" accept=".csv,.zip,.json,text/csv,application/zip,application/json" multiple>
       </label>
     </div>
+    <button type="button" id="mode" class="btn" style="margin-top:8px"></button>
     <div id="cloud" class="cloud">クラウドの保存先を確認中…</div>
     <div id="wx" class="cloud"></div>
     <div id="status" role="status">CSV か zip を選びます。取り込んだ走行は、このアプリ専用の非公開の保存先にたまっていきます。</div>
@@ -649,6 +651,7 @@ function fitModel(trips) {
 function explain(t) {
   if (!model || !isFinite(t.kmPerL) || t.distKm < 1) return null;
   const parts = FACTORS.map((F, j) => ({ label: F[1], key: F[0], eff: model.coef[j] * (F[2](t) - model.avgX[j]) }));
+  if (SIMPLE) for (let i = parts.length - 1; i >= 0; i--) if (parts[i].key === "warm" || parts[i].key === "harsh") parts.splice(i, 1);
   parts.sort((a, z) => Math.abs(z.eff) - Math.abs(a.eff));
   return { diff: t.kmPerL - model.avgKml, parts };
 }
@@ -660,6 +663,13 @@ const DEFAULT_PIDS = [SP, RPM, "スロットル位置", LH, "加速", CT];
 const VIEWS = ["day", "ov", "list", "detail"];
 let trips = [], current = null, curSeries = null, selected = null, charts = [], cursor = -1, view = "day", prevView = "day", dayKey = null;
 let usual = null; // per-person baselines for the day diagnosis
+// かんたん表示(既定): 暖機・急ブレーキ・天気は出さず、燃費・速度帯・推移・距離と時間に絞る
+let SIMPLE = true;
+try { SIMPLE = localStorage.getItem("ddw-simple") !== "0"; } catch {}
+function applyMode() {
+  document.body.classList.toggle("simple", SIMPLE);
+  const b = $("mode"); if (b) { b.textContent = SIMPLE ? "くわしい表示にする" : "かんたん表示にする"; }
+}
 
 function savedSel() { try { return JSON.parse(localStorage.getItem("ddw-sel")); } catch { return null; } }
 function saveSel() { try { localStorage.setItem("ddw-sel", JSON.stringify([...selected])); } catch {} }
@@ -678,6 +688,8 @@ function show(v) {
   if (v === "ov") renderOverview();
   if (v === "list") renderList();
 }
+$("mode").onclick = () => { SIMPLE = !SIMPLE; try { localStorage.setItem("ddw-simple", SIMPLE ? "1" : "0"); } catch {} applyMode(); if (trips.length) show(view === "detail" ? prevView : view); };
+applyMode();
 $("tab-day").onclick = () => show("day");
 $("tab-ov").onclick = () => show("ov");
 $("tab-list").onclick = () => show("list");
@@ -721,7 +733,7 @@ function renderDay() {
   const brkSt = !U || !isFinite(brk10) ? "" : brk10 <= U.brk10 * 1.1 ? "ok" : brk10 >= U.brk10 * 1.8 ? "ng" : "mid";
   const cold = dt.find(t => t.ct0 < 55 && isFinite(t.preIdleS));
   const warmSt = !cold ? "" : cold.preIdleS <= 75 ? "ok" : cold.preIdleS <= 150 ? "mid" : "ng";
-  const pills = [ecoSt && pill("燃費", ecoSt), brkSt && pill("ブレーキ", brkSt), warmSt && pill("暖機", warmSt)].filter(Boolean).join("");
+  const pills = [ecoSt && pill("燃費", ecoSt), !SIMPLE && brkSt && pill("ブレーキ", brkSt), !SIMPLE && warmSt && pill("暖機", warmSt)].filter(Boolean).join("");
   const headline = !isFinite(diff) ? `${dt.length}本の走行` :
     diff >= 0.5 ? `いつもより燃費が良い日でした` : diff <= -1.5 ? `いつもより燃費が悪い日でした` : `いつも通りの燃費でした`;
 
@@ -733,13 +745,13 @@ function renderDay() {
     if (main.length) adv.push([diff < 0 ? "ng" : "ok", diff < 0 ? "燃費が下がった理由" : "燃費が良かった理由",
       main.map(p => `${p.label}が${diff < 0 ? "多め" : "少なめ"}（<strong>${signed(p.eff)}</strong> km/L）`).join("、") + "。"]);
   }
-  if (U && isFinite(brk10) && km >= 3) {
+  if (!SIMPLE && U && isFinite(brk10) && km >= 3) {
     if (brk10 >= U.brk10 * 1.5 && brakes >= 3) {
       const evs = dt.flatMap(t => t.events.filter(e => e.kind === "brake").map(e => clock(t.startSec + e.i).slice(0, 5)));
       adv.push(["ng", "急ブレーキが多め", `<strong>${brakes}回</strong>（10kmあたり ${fmt(brk10)} 回、いつもは ${fmt(U.brk10)} 回）。${evs.slice(0, 5).join("、")}${evs.length > 5 ? " ほか" : ""}。車間を少し広めにとると減らせます。`]);
     } else adv.push(["ok", "ブレーキはおだやか", `急ブレーキは <strong>${brakes}回</strong>（10kmあたり ${fmt(brk10)} 回、いつもは ${fmt(U.brk10)} 回）。`]);
   }
-  if (cold) {
+  if (!SIMPLE && cold) {
     const mL = (cold.preIdleF || 0) * 1000;
     const first = `発進前のアイドリングは <strong>${dur(cold.preIdleS)}</strong>（水温 ${fmt(cold.ct0, 0)}℃ → ${fmt(cold.ctDep, 0)}℃、燃料 約${fmt(mL, 0)}mL）。`;
     const hw = isFinite(cold.ctHw) ? `60km/hに達したとき（高架の合流あたり）の水温は <strong>${fmt(cold.ctHw, 0)}℃</strong>` + (isFinite(cold.rpmCold) ? `、温まるまでの最高回転は ${fmt(cold.rpmCold, 0)}rpm。` : "。") : "";
@@ -749,14 +761,18 @@ function renderDay() {
   }
   if (idleShare > (U ? U.idleShare + 0.08 : 0.3)) adv.push(["mid", "停車が長め", `走行時間の <strong>${fmt(idleShare * 100, 0)}%</strong> が停車でした（いつもは ${fmt(U ? U.idleShare * 100 : NaN, 0)}%）。停車中も1分で約15mLの燃料を使います。`]);
   const wd = wxDay(dayKey), dw = dt.map(wxOf).filter(Boolean);
-  if (wxStats && dw.some(w => w.wet || w.snow) && isFinite(wxStats.wet)) {
+  if (!SIMPLE && wxStats && dw.some(w => w.wet || w.snow) && isFinite(wxStats.wet)) {
     const snow = dw.some(w => w.snow);
     adv.push(["mid", snow ? "雪の中の運転" : "雨の中の運転", `${snow ? "雪" : "雨"}の日の燃費は、これまで平均 <strong>${fmt(wxStats.wet)} km/L</strong>（晴れ・くもりの日は ${fmt(wxStats.dry)} km/L、${wxStats.wetN} 走行から）。${wxStats.wet < wxStats.dry - 0.3 ? "エアコンや、流れがゆっくりになる分で下がりがちです。" : "これまでのところ、天気で燃費はほとんど変わっていません。"}${snow ? "路面が滑りやすいので、合流やブレーキは早めに。" : ""}`]);
   }
   const coldW = cold && wxOf(cold), cb = coldW && bandOf(coldW.temp);
-  if (coldW && cb && cb.n >= 3 && isFinite(cb.warm)) adv.push(["mid", `気温 ${fmt(coldW.temp, 0)}℃ の${new Date(cold.startMs).getHours() < 11 ? "朝" : "とき"}`, `${cb.label}の日は、水温が80℃になるまで中央値 <strong>${dur(cb.warm)}</strong>${isFinite(cb.ctHw) ? `、60km/hに達したときの水温は ${fmt(cb.ctHw, 0)}℃` : ""}（${cb.n} 走行から）。今日は ${isFinite(cold.warmS) && cold.warmS > 0 ? dur(cold.warmS) : "—"} でした。`]);
+  if (!SIMPLE && coldW && cb && cb.n >= 3 && isFinite(cb.warm)) adv.push(["mid", `気温 ${fmt(coldW.temp, 0)}℃ の${new Date(cold.startMs).getHours() < 11 ? "朝" : "とき"}`, `${cb.label}の日は、水温が80℃になるまで中央値 <strong>${dur(cb.warm)}</strong>${isFinite(cb.ctHw) ? `、60km/hに達したときの水温は ${fmt(cb.ctHw, 0)}℃` : ""}（${cb.n} 走行から）。今日は ${isFinite(cold.warmS) && cold.warmS > 0 ? dur(cold.warmS) : "—"} でした。`]);
   const shortT = dt.filter(t => t.distKm < 3 && t.distKm > 0.2);
-  if (shortT.length) adv.push(["mid", "短い走行", `3km未満の走行が ${shortT.length} 本ありました。エンジンが温まる前に終わるので、燃費は悪くなりがちです。`]);
+  if (shortT.length) adv.push(["mid", "短い走行", `3km未満の走行が ${shortT.length} 本ありました。短い距離の走行は、燃費が悪くなりがちです。`]);
+  if (SIMPLE) {
+    const sp = dt.reduce((s, t) => s + t.distKm, 0) / Math.max(1e-9, dt.reduce((s, t) => s + t.durS, 0) / 3600), mx = Math.max(...dt.map(t => t.maxKmh));
+    adv.unshift(["mid", "この日の数字", `走った距離は <strong>${fmt(km)} km</strong>、運転時間は <strong>${dur(durS)}</strong>、平均 <strong>${fmt(sp, 0)} km/h</strong>、最高 <strong>${fmt(mx, 0)} km/h</strong> でした。`]);
+  }
 
   box.innerHTML = `
     <div class="days" id="days">${days.slice(0, 14).map(k => { const d = new Date(k + "T00:00"); return `<button type="button" data-k="${k}" aria-pressed="${k === dayKey}"><span>${d.getMonth() + 1}/${d.getDate()}</span><b>${"日月火水木金土"[d.getDay()]}</b></button>`; }).join("")}</div>
@@ -774,7 +790,7 @@ function renderDay() {
         <div class="kpi"><b>${fmt(km)} km</b><span>距離</span></div>
         <div class="kpi"><b>${fmt(L, 2)} L</b><span>燃料</span></div>
         <div class="kpi"><b>${dur(durS)}</b><span>運転時間</span></div>
-        <div class="kpi"><b>${brakes} 回</b><span>急ブレーキ</span></div>
+        ${SIMPLE ? `<div class="kpi"><b>${fmt(km / Math.max(1e-9, durS / 3600), 0)} km/h</b><span>平均速度</span></div>` : `<div class="kpi"><b>${brakes} 回</b><span>急ブレーキ</span></div>`}
       </div>
     </div>
     ${adv.length ? `<div class="card"><h3>今日のひとこと</h3><ul class="advice">${adv.map(([st, h, p]) => `<li class="${st}"><div><h4>${h}</h4><p>${p}</p></div></li>`).join("")}</ul></div>` : ""}
@@ -873,11 +889,11 @@ function renderOverview() {
   const best = [...bk].sort((a, z) => z.kml - a.kml)[0], idleF = v.reduce((s, t) => s + t.idleF, 0);
   if (best) fnd.push(["速度帯", `いちばん燃費が良いのは <strong>${best.label}km/h</strong> で ${fmt(best.kml)} km/L。停車中に使った燃料は合計 ${fmt(idleF, 1)} L（全体の ${fmt(idleF / L * 100, 0)}%）です。`]);
   const coldT = v.filter(t => t.ct0 < 55 && isFinite(t.preIdleS));
-  if (coldT.length >= 5) {
+  if (!SIMPLE && coldT.length >= 5) {
     const pf = coldT.reduce((s, t) => s + (t.preIdleF || 0), 0), ps = coldT.map(t => t.preIdleS).sort((a, z) => a - z);
     fnd.push(["暖機", `冷えた状態からの発進は ${coldT.length} 回。発進前のアイドリングは中央値 <strong>${dur(ps[ps.length >> 1])}</strong>、合計で約 ${fmt(pf, 1)} L を使いました。`]);
   }
-  if (wxStats) {
+  if (!SIMPLE && wxStats) {
     const bs = wxStats.bands.filter(b => isFinite(b.kml));
     fnd.push(["天気", (isFinite(wxStats.wet) ? `雨・雪の日は <strong>${fmt(wxStats.wet)} km/L</strong>、晴れ・くもりの日は ${fmt(wxStats.dry)} km/L（雨・雪 ${wxStats.wetN} 走行）。` : "") +
       (bs.length >= 2 ? `気温別では ${bs.map(b => `${b.label} ${fmt(b.kml)}`).join("、")} km/L。` : "") +
@@ -889,7 +905,7 @@ function renderOverview() {
   if (ms.length >= 3) {
     const a = ms.slice(0, Math.ceil(ms.length / 2)), z = ms.slice(Math.ceil(ms.length / 2));
     const avg = (arr, key) => arr.reduce((s, m) => s + m[key] * m.km, 0) / arr.reduce((s, m) => s + m.km, 0);
-    fnd.push(["推移", `前半（${+a[0].k.slice(5)}〜${+a[a.length - 1].k.slice(5)}月）と後半（${+z[0].k.slice(5)}〜${+z[z.length - 1].k.slice(5)}月）で、燃費は ${fmt(avg(a, "kml"))} → <strong>${fmt(avg(z, "kml"))} km/L</strong>、急ブレーキは10kmあたり ${fmt(avg(a, "b10"))} → <strong>${fmt(avg(z, "b10"))} 回</strong>。`]);
+    fnd.push(["推移", `前半（${+a[0].k.slice(5)}〜${+a[a.length - 1].k.slice(5)}月）と後半（${+z[0].k.slice(5)}〜${+z[z.length - 1].k.slice(5)}月）で、燃費は ${fmt(avg(a, "kml"))} → <strong>${fmt(avg(z, "kml"))} km/L</strong>${SIMPLE ? "" : `、急ブレーキは10kmあたり ${fmt(avg(a, "b10"))} → <strong>${fmt(avg(z, "b10"))} 回</strong>`}。`]);
   }
   const sorted = v.filter(t => t.distKm >= 3).sort((a, z) => z.kmPerL - a.kmPerL);
   const reason = t => { const ex = explain(t); if (!ex) return ""; const p = ex.parts.filter(p => (ex.diff < 0 ? p.eff < 0 : p.eff > 0))[0]; return p ? `（主な理由：${p.label}が${ex.diff < 0 ? "多い" : "少ない"}）` : ""; };
@@ -901,11 +917,11 @@ function renderOverview() {
   box.innerHTML = `<div class="stats">${stats.map(([a, b]) => `<div class="stat"><b>${a}</b><span>${b}</span></div>`).join("")}</div>
     <div class="card"><h3>全体の診断</h3>${fnd.map(([tag, html]) => `<div class="finding"><span class="tag">${tag}</span><p>${html}</p></div>`).join("")}</div>
     <div class="card ov-chart"><h3>月ごとの燃費と距離</h3><div class="legend"><span><i style="background:var(--accent)"></i>燃費（km/L）</span><span><i style="background:var(--muted);opacity:.5"></i>距離（いちばん長い月 ${fmt(Math.max(...ms.map(m => m.km)), 0)} km）</span></div><canvas id="ov-month"></canvas></div>
-    <div class="card ov-chart"><h3>月ごとの急ブレーキ（10kmあたり）</h3><canvas id="ov-brake"></canvas></div>
-    <p class="note">「いつも」「平均」は距離で重みづけした全走行の燃費です。原因の推定は、停車・高速・暖機・急な加減速の4つと燃費の関係を、この端末にある走行から当てはめたものです。</p>`;
+    ${SIMPLE ? "" : `<div class="card ov-chart"><h3>月ごとの急ブレーキ（10kmあたり）</h3><canvas id="ov-brake"></canvas></div>`}
+    <p class="note">「いつも」「平均」は距離で重みづけした全走行の燃費です。原因の推定は、停車・高速などと燃費の関係を、この端末にある走行から当てはめたものです。</p>`;
   box.querySelectorAll("button.linkish").forEach(b => b.onclick = () => openTrip(decodeURIComponent(b.dataset.id)));
   monthChart($("ov-month"), ms, "kml", "km");
-  monthChart($("ov-brake"), ms, "b10", null);
+  if (!SIMPLE) monthChart($("ov-brake"), ms, "b10", null);
 }
 function monthChart(cv, ms, key, barKey) {
   const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
@@ -979,13 +995,13 @@ function renderDiag(t) {
     F.push(["いつもと比べて", `平均 ${fmt(model.avgKml)} km/L に対して <strong class="${ex.diff >= 0 ? "good" : "bad"}">${signed(ex.diff)} km/L</strong>。${why}`]);
   }
   const tw = wxOf(t);
-  if (tw) F.push(["天気", `${tw.name}・気温 <strong>${fmt(tw.temp, 0)}℃</strong>${tw.p >= 0.1 ? `・走行中の降水 ${fmt(tw.p, 1)}mm` : ""}。` + (wxStats && (tw.wet || tw.snow) && isFinite(wxStats.wet) ? `雨・雪の日の平均は ${fmt(wxStats.wet)} km/L です。` : "")]);
+  if (!SIMPLE && tw) F.push(["天気", `${tw.name}・気温 <strong>${fmt(tw.temp, 0)}℃</strong>${tw.p >= 0.1 ? `・走行中の降水 ${fmt(tw.p, 1)}mm` : ""}。` + (wxStats && (tw.wet || tw.snow) && isFinite(wxStats.wet) ? `雨・雪の日の平均は ${fmt(wxStats.wet)} km/L です。` : "")]);
   if (t.hasFuel && t.fuelL > 0) {
     const fastShare = t.fastF / t.fuelL, best = t.bands.map((b, i) => ({ label: BANDS[i][2], kml: b.f > 0.01 && b.d > 0.2 ? b.d / b.f : NaN })).filter(b => isFinite(b.kml)).sort((a, z) => z.kml - a.kml)[0];
     if (fastShare > .25) F.push(["燃料", `80km/h以上で燃料の <strong>${fmt(fastShare * 100, 0)}%</strong> を使いました（距離では ${fmt(t.fastD / t.distKm * 100, 0)}%）。` + (best ? `いちばん燃費が良かったのは ${best.label}km/h の <strong>${fmt(best.kml)} km/L</strong>。` : "")]);
     else if (best) F.push(["燃料", `いちばん燃費が良かったのは ${best.label}km/h の <strong>${fmt(best.kml)} km/L</strong> でした。`]);
   }
-  if (isFinite(t.ct0)) {
+  if (!SIMPLE && isFinite(t.ct0)) {
     const pre = isFinite(t.preIdleS) && t.ct0 < 55 ? `発進前のアイドリングは ${dur(t.preIdleS)}（${fmt(t.ct0, 0)}℃ → ${fmt(t.ctDep, 0)}℃）。` : "";
     if (t.ct0 < 70 && t.warmS > 0 && t.warmF > 0.01) {
       const k1 = t.warmD / t.warmF, k2 = (t.distKm - t.warmD) / (t.fuelL - t.warmF);
@@ -995,7 +1011,7 @@ function renderDiag(t) {
   if (t.idleS > 30 && t.hasFuel) F.push(["停車", `止まっていた時間は <strong>${dur(t.idleS)}</strong>、その間に ${fmt(t.idleF, 2)} L（全体の <strong>${fmt(t.idleF / t.fuelL * 100, 0)}%</strong>）を使いました。`]);
   if (t.cut > 0) F.push(["惰性", `アクセルを離して燃料ゼロで走っていた時間は <strong>${dur(t.cut)}</strong> です。早めにアクセルを離すほど、ここが伸びます。`]);
   const per = t.distKm > 1 ? `（10kmあたり ${fmt((t.brakes + t.accels) / t.distKm * 10)} 回）` : "";
-  F.push(["急な操作", t.events.length ? `急ブレーキ <strong>${t.brakes}回</strong>、急加速 <strong>${t.accels}回</strong>${per}。下の時刻を押すとその場面に移動します。` : "3秒で24km/h以上の急な加減速はありませんでした。"]);
+  if (!SIMPLE) F.push(["急な操作", t.events.length ? `急ブレーキ <strong>${t.brakes}回</strong>、急加速 <strong>${t.accels}回</strong>${per}。下の時刻を押すとその場面に移動します。` : "3秒で24km/h以上の急な加減速はありませんでした。"]);
   if (t.rpm4k > 10) F.push(["回転数", `4,000rpmを超えていた時間は <strong>${dur(t.rpm4k)}</strong> でした。`]);
 
   const maxShare = Math.max(...t.bands.map(b => Math.max(b.f / t.fuelL, b.d / t.distKm)).filter(isFinite), .01);
