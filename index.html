@@ -1,9 +1,14 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>走行ログビューア</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <style>
+@font-face { font-family: "Chakra Petch"; font-weight: 500; font-style: normal; font-display: swap; src: url(fonts/chakra-petch-500.woff) format("woff"); }
+@font-face { font-family: "Chakra Petch"; font-weight: 600; font-style: normal; font-display: swap; src: url(fonts/chakra-petch-600.woff) format("woff"); }
+@font-face { font-family: "Chakra Petch"; font-weight: 700; font-style: normal; font-display: swap; src: url(fonts/chakra-petch-700.woff) format("woff"); }
 /* Layout: phone-first single column. Dark instrument-cluster header with today's gauge → tabs (診断 / まとめ / 走行一覧) → cards.
    One trip opens as its own view with diagnosis and stacked charts sharing one time cursor. */
 :root {
@@ -178,6 +183,8 @@ details[open] summary { margin-bottom: 8px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 body.simple #cloud, body.simple #wx { display: none; }
 </style>
+</head>
+<body>
 
 <header class="cluster">
   <div class="wrap">
@@ -188,6 +195,7 @@ body.simple #cloud, body.simple #wx { display: none; }
       </label>
     </div>
     <button type="button" id="mode" class="btn" style="margin-top:8px"></button>
+    <button type="button" id="export" class="btn" style="margin-top:8px">データを書き出して保存</button>
     <div id="cloud" class="cloud">クラウドの保存先を確認中…</div>
     <div id="wx" class="cloud"></div>
     <div id="status" role="status">CSV か zip を選びます。取り込んだ走行は、このアプリ専用の非公開の保存先にたまっていきます。</div>
@@ -620,6 +628,7 @@ const signed = (x, d = 1) => (x > 0 ? "+" : x < 0 ? "−" : "±") + fmt(Math.abs
 
 // ---------- what drives fuel economy across this person's trips ----------
 const BANDS = [[0, 1, "停車"], [1, 40, "〜40"], [40, 60, "40〜60"], [60, 80, "60〜80"], [80, 100, "80〜100"], [100, 999, "100〜"]];
+const bandName = l => l.startsWith("〜") ? `時速${l.slice(1)}km未満` : l.endsWith("〜") ? `時速${l.slice(0, -1)}km以上` : `時速${l}km`;
 const FACTORS = [
   ["idle", "停車の割合", t => t.idleS / (t.idleS + t.movingS)],
   ["fast", "80km/h以上の割合", t => t.distKm > 0 ? t.fastD / t.distKm : 0],
@@ -880,6 +889,10 @@ function renderOverview() {
     if (idle) fnd.push(["最大の要因", `燃費をいちばん左右しているのは<strong>停車の時間</strong>です。走行時間に占める停車の割合が10%増えると、燃費は約 <strong>${fmt(-idle.per / 10)} km/L</strong> 下がります（${model.n} 走行から推定）。`]);
     if (fast) fnd.push(["速度", `80km/h以上で走る距離の割合が10%増えると、燃費は約 <strong>${fmt(-fast.per / 10)} km/L</strong> 下がります。`]);
   }
+  if (SIMPLE) {
+    const mph = km / hrs;
+    fnd.unshift(["走った量", `これまでに <strong>${v.length} 回</strong>、合わせて <strong>${fmt(km, 0)} km</strong>、<strong>${fmt(hrs, 0)} 時間</strong>走りました。平均の速さは <strong>${fmt(mph, 0)} km/h</strong>、最高は <strong>${fmt(Math.max(...v.map(t => t.maxKmh)), 0)} km/h</strong>。燃費は平均 <strong>${fmt(km / L)} km/L</strong>、使ったガソリンは約 ${fmt(L, 0)} L です。`]);
+  }
   const short = v.filter(t => t.distKm < 3), rest = v.filter(t => t.distKm >= 3);
   const kmlOf = a => a.reduce((s, t) => s + t.distKm, 0) / a.reduce((s, t) => s + t.fuelL, 0);
   if (short.length >= 3) fnd.push(["短い走行", `3km未満の走行（${short.length}本）は平均 <strong>${fmt(kmlOf(short))} km/L</strong>、それ以外は ${fmt(kmlOf(rest))} km/L。エンジンが暖まる前に終わるためです。`]);
@@ -887,7 +900,10 @@ function renderOverview() {
   v.forEach(t => t.bands && t.bands.forEach((b, i) => { B[i].f += b.f; B[i].d += b.d; }));
   const bk = B.map((b, i) => ({ label: BANDS[i][2], kml: b.f > 0.05 && b.d > 1 ? b.d / b.f : NaN })).filter(b => isFinite(b.kml));
   const best = [...bk].sort((a, z) => z.kml - a.kml)[0], idleF = v.reduce((s, t) => s + t.idleF, 0);
-  if (best) fnd.push(["速度帯", `いちばん燃費が良いのは <strong>${best.label}km/h</strong> で ${fmt(best.kml)} km/L。停車中に使った燃料は合計 ${fmt(idleF, 1)} L（全体の ${fmt(idleF / L * 100, 0)}%）です。`]);
+  if (SIMPLE && bk.length >= 2) {
+    const worst = [...bk].sort((a, z) => a.kml - z.kml)[0];
+    fnd.push(["速度帯ごとの燃費", `${bk.map(b => `${bandName(b.label)}：<strong>${fmt(b.kml)}</strong>`).join("、")}（km/L）。<strong>${bandName(best.label)}</strong> で走っているときがいちばん良く、<strong>${bandName(worst.label)}</strong> がいちばん低めです。停車中に使ったガソリンは合計 ${fmt(idleF, 1)} L（全体の ${fmt(idleF / L * 100, 0)}%）でした。`]);
+  } else if (best) fnd.push(["速度帯", `いちばん燃費が良いのは <strong>${best.label}km/h</strong> で ${fmt(best.kml)} km/L。停車中に使った燃料は合計 ${fmt(idleF, 1)} L（全体の ${fmt(idleF / L * 100, 0)}%）です。`]);
   const coldT = v.filter(t => t.ct0 < 55 && isFinite(t.preIdleS));
   if (!SIMPLE && coldT.length >= 5) {
     const pf = coldT.reduce((s, t) => s + (t.preIdleF || 0), 0), ps = coldT.map(t => t.preIdleS).sort((a, z) => a - z);
@@ -906,6 +922,10 @@ function renderOverview() {
     const a = ms.slice(0, Math.ceil(ms.length / 2)), z = ms.slice(Math.ceil(ms.length / 2));
     const avg = (arr, key) => arr.reduce((s, m) => s + m[key] * m.km, 0) / arr.reduce((s, m) => s + m.km, 0);
     fnd.push(["推移", `前半（${+a[0].k.slice(5)}〜${+a[a.length - 1].k.slice(5)}月）と後半（${+z[0].k.slice(5)}〜${+z[z.length - 1].k.slice(5)}月）で、燃費は ${fmt(avg(a, "kml"))} → <strong>${fmt(avg(z, "kml"))} km/L</strong>${SIMPLE ? "" : `、急ブレーキは10kmあたり ${fmt(avg(a, "b10"))} → <strong>${fmt(avg(z, "b10"))} 回</strong>`}。`]);
+  }
+  if (SIMPLE && ms.length >= 2) {
+    const mb = [...ms].sort((a, z) => z.kml - a.kml);
+    fnd.push(["月ごとの燃費", `${ms.map(m => `${+m.k.slice(5)}月 <strong>${fmt(m.kml)}</strong>（${fmt(m.km, 0)} km）`).join("、")}。${mb[0].kml - mb[mb.length - 1].kml < 0.1 ? "" : `いちばん良かったのは <strong>${+mb[0].k.slice(5)}月</strong>、いちばん低かったのは <strong>${+mb[mb.length - 1].k.slice(5)}月</strong> です。`}`]);
   }
   const sorted = v.filter(t => t.distKm >= 3).sort((a, z) => z.kmPerL - a.kmPerL);
   const reason = t => { const ex = explain(t); if (!ex) return ""; const p = ex.parts.filter(p => (ex.diff < 0 ? p.eff < 0 : p.eff > 0))[0]; return p ? `（主な理由：${p.label}が${ex.diff < 0 ? "多い" : "少ない"}）` : ""; };
@@ -1127,7 +1147,11 @@ $("file").addEventListener("change", async e => {
   const jobs = [];
   for (const f of files) {
     try {
-      if (/\.json$/i.test(f.name)) { wxN += await wxImport(await f.text()); continue; }
+      if (/\.json$/i.test(f.name)) {
+        const txt = await f.text();
+        if (txt.slice(0, 300).includes('"ddw-export"')) { const n = await importExport(txt); ok += n; if (n) newest = newest || Date.now(); continue; }
+        wxN += await wxImport(txt); continue;
+      }
       if (/\.zip$/i.test(f.name)) zipEntries(await f.arrayBuffer()).forEach(en => jobs.push(en));
       else jobs.push({ name: f.name, read: () => f.text() });
     } catch (err) { ng.push(err.message || f.name); }
@@ -1155,6 +1179,38 @@ $("file").addEventListener("change", async e => {
   dayKey = newest ? dayOf(newest) : null;
   show("day");
   wxBadge();
+});
+// ---------- backup: write all trips to one file / read it back (iOS Safari can clear site storage) ----------
+async function importExport(txt) {
+  const o = JSON.parse(txt); let n = 0;
+  const have = new Set(trips.map(t => t.id));
+  for (const t of o.trips || []) {
+    if (have.has(t.id)) continue;
+    const sum = fromJSON(t); sum.cloud = false;
+    const p = (o.series || {})[t.id];
+    await putTrip(sum, p ? unpackSeries(p) : {}); have.add(t.id); n++;
+  }
+  return n;
+}
+$("export").addEventListener("click", async () => {
+  const b = $("export"); if (!trips.length) { $("status").textContent = "書き出す走行がまだありません。"; return; }
+  b.disabled = true;
+  try {
+    const out = { kind: "ddw-export", v: 1, at: new Date().toISOString(), trips: [], series: {} };
+    for (let i = 0; i < trips.length; i++) {
+      b.textContent = `書き出し中… ${i + 1} / ${trips.length}`;
+      await new Promise(r => setTimeout(r));
+      const t = trips[i], s = await getSeries(t.id);
+      out.trips.push(toJSON(t));
+      const p = s && packSeries(s); if (p) out.series[t.id] = p;
+    }
+    const blob = new Blob([JSON.stringify(out)], { type: "application/json" });
+    const name = `走行データ-${new Date().toISOString().slice(0, 10)}.json`, file = new File([blob], name, { type: "application/json" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); } catch (e) { if (e && e.name !== "AbortError") throw e; } }
+    else { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+    $("status").textContent = `${trips.length} 件の走行を「${name}」に書き出しました。機種変更のときは、このファイルを「走行データを読み込む」から選ぶと元に戻ります。`;
+  } catch (e) { console.warn(e); $("status").textContent = "書き出しに失敗しました。"; }
+  b.disabled = false; b.textContent = "データを書き出して保存";
 });
 $("d-delete").addEventListener("click", async () => {
   const b = $("d-delete");
@@ -1191,3 +1247,5 @@ function cloudBadge() {
   if (await recountHarsh()) { trips = await allTrips(); refreshModels(); if (view !== "detail") show(view); }
 })();
 </script>
+</body>
+</html>
