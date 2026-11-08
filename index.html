@@ -185,6 +185,12 @@ details[open] summary { margin-bottom: 8px; }
 .chart canvas { display: block; width: 100%; height: 96px; touch-action: pan-y; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 body.simple #cloud, body.simple #wx { display: none; }
+/* 5項目表示: 回転数・速度・トルク・出力・水温と最大値だけ。燃費・診断・まとめは出さない */
+body.five #tab-day, body.five #tab-ov, body.five #mode, body.five #cloud, body.five #wx,
+body.five #d-stats, body.five #d-diag, body.five #d-pick, body.five .trip .eco, body.five .trip .meta .good, body.five .trip .meta .bad, body.five .note-fuel { display: none; }
+.chart-max { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 2px; font-size: .78rem; color: var(--muted); }
+.chart-max b { font-family: var(--font-num); font-size: 1.5rem; color: var(--accent); }
+.chart.nodata .chart-max b { font-size: 1.1rem; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -198,7 +204,6 @@ body.simple #cloud, body.simple #wx { display: none; }
       </label>
     </div>
     <button type="button" id="mode" class="btn" style="margin-top:8px"></button>
-    <a href="father.html" class="btn" style="margin-top:8px;display:inline-block;text-decoration:none">5つの数字(回転数・速度・トルク・出力・水温)</a>
     <button type="button" id="export" class="btn" style="margin-top:8px">データを書き出して保存</button>
     <div id="cloud" class="cloud">クラウドの保存先を確認中…</div>
     <div id="wx" class="cloud"></div>
@@ -234,7 +239,7 @@ body.simple #cloud, body.simple #wx { display: none; }
     </details>
     <div class="readout" id="d-readout">グラフをなぞると、その時点の値が出ます</div>
     <div class="charts" id="d-charts"></div>
-    <p class="note">グラフは1秒ごとに間引いた値です。距離・燃料は速度と瞬時燃料消費量から計算しています。</p>
+    <p class="note note-fuel">グラフは1秒ごとに間引いた値です。距離・燃料は速度と瞬時燃料消費量から計算しています。</p>
   </section>
 </main>
 
@@ -679,8 +684,12 @@ let usual = null; // per-person baselines for the day diagnosis
 // かんたん表示(既定): 暖機・急ブレーキ・天気は出さず、燃費・速度帯・推移・距離と時間に絞る
 let SIMPLE = true;
 try { SIMPLE = localStorage.getItem("ddw-simple") !== "0"; } catch {}
+// 回転数・速度・トルク・出力・水温だけの表示: ?five=1 で開くとオンになり、この端末に覚えます(?five=0 で戻す)
+let FIVE = false;
+try { const q = new URLSearchParams(location.search).get("five"); if (q === "1" || q === "0") localStorage.setItem("ddw-five", q); FIVE = localStorage.getItem("ddw-five") === "1"; } catch {}
 function applyMode() {
   document.body.classList.toggle("simple", SIMPLE);
+  document.body.classList.toggle("five", FIVE);
   const b = $("mode"); if (b) { b.textContent = SIMPLE ? "くわしい表示にする" : "かんたん表示にする"; }
 }
 
@@ -691,6 +700,7 @@ const dayOf = ms => { const d = new Date(ms); return `${d.getFullYear()}-${Strin
 const dayLabel = k => { const d = new Date(k + "T00:00"); return `${d.getMonth() + 1}月${d.getDate()}日（${"日月火水木金土"[d.getDay()]}）`; };
 
 function show(v) {
+  if (FIVE && (v === "day" || v === "ov")) v = "list";
   if (v !== "detail") prevView = v;
   view = v;
   for (const x of VIEWS) $(x === "detail" ? "detail" : "v-" + x).hidden = x !== v;
@@ -1058,15 +1068,43 @@ function renderDiag(t) {
   });
 }
 
+// 5項目表示で出す項目。トルクは CSV に列が無いので、出力と回転数からの計算値(T[N·m] = P[kW]×9549 ÷ 回転数)。
+const FIVE_ITEMS = [
+  { name: "エンジン回転数", label: "回転数", unit: "rpm", dec: 0 },
+  { name: SP, label: "速度", unit: "km/h", dec: 0 },
+  { name: "トルク", label: "トルク(出力と回転数からの計算値)", unit: "N·m", dec: 0, torque: true },
+  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", unit: "hp", dec: 1 },
+  { name: CT, label: "水温", unit: "℃", dec: 0 },
+];
+function fiveData(it) {
+  if (it.torque) {
+    const pw = curSeries["Power from MAF"] || curSeries["瞬時エンジン出力 (燃費)"], rp = curSeries[RPM];
+    if (!pw || !rp) return null;
+    const o = new Float32Array(rp.length).fill(NaN);
+    for (let i = 0; i < rp.length; i++) if (rp[i] >= 1000 && isFinite(pw[i])) o[i] = pw[i] * 0.7457 * 9549 / rp[i]; // 1000rpm未満は計算しない
+    return o;
+  }
+  return curSeries[it.name] || (it.alt && curSeries[it.alt]) || null;
+}
 function drawCharts() {
   const box = $("d-charts"); box.innerHTML = ""; charts = [];
-  for (const p of current.pids) {
-    if (!selected.has(p.name) || !curSeries[p.name]) continue;
+  const list = FIVE ? FIVE_ITEMS.map(it => ({ it, name: it.label, unit: it.unit, data: fiveData(it) }))
+    : current.pids.filter(p => selected.has(p.name) && curSeries[p.name]).map(p => ({ name: p.name, unit: p.unit, data: curSeries[p.name] }));
+  for (const p of list) {
     const el = document.createElement("div"); el.className = "chart";
-    el.innerHTML = `<div class="chart-head"><span></span><span class="val"></span></div><canvas></canvas>`;
+    el.innerHTML = `<div class="chart-head"><span></span><span class="val"></span></div>` + (FIVE ? `<div class="chart-max"><span>最大値</span><b></b><span class="at"></span></div>` : "") + `<canvas></canvas>`;
     el.querySelector(".chart-head span").textContent = p.unit ? `${p.name}（${p.unit}）` : p.name;
     box.appendChild(el);
-    const c = { el, canvas: el.querySelector("canvas"), val: el.querySelector(".val"), data: curSeries[p.name], unit: p.unit };
+    let mx = -Infinity, at = -1;
+    if (p.data) for (let i = 0; i < p.data.length; i++) if (p.data[i] > mx) { mx = p.data[i]; at = i; }
+    if (FIVE) {
+      const b = el.querySelector(".chart-max b");
+      if (at < 0) { el.classList.add("nodata"); b.textContent = "データなし"; el.querySelector("canvas").remove(); el.querySelector(".at").textContent = ""; continue; }
+      b.textContent = `${fmt(mx, p.it.dec)} ${p.unit}`;
+      el.querySelector(".at").textContent = `${clock(current.startSec + at).slice(0, 5)} ごろ`;
+    }
+    if (!p.data) continue;
+    const c = { el, canvas: el.querySelector("canvas"), val: el.querySelector(".val"), data: p.data, unit: p.unit };
     charts.push(c); bindPointer(c.canvas);
   }
   paintAll();
