@@ -189,7 +189,17 @@ body.simple #cloud, body.simple #wx { display: none; }
 /* 5項目表示(回転数・速度・トルク・出力・水温と最大値): 画面の作りは元のまま、燃費まわりの中身だけ入れ替える */
 body.five #tab-ov, body.five #mode, body.five #cloud, body.five #wx, body.five #d-diag, body.five #d-pick,
 body.five .hero, body.five .trip .eco, body.five .trip .meta .good, body.five .trip .meta .bad, body.five .tc .e, body.five .note-fuel { display: none; }
-body.five .kpis { grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
+body.five .stats { display: block; }
+/* 最大値を大きく: 数字は静止表示(アニメーションなし) */
+.five-grid { display: grid; gap: 10px; }
+.five-card { position: relative; background: var(--surface); border: 1px solid var(--line); border-left: 6px solid var(--accent); border-radius: 14px; padding: 12px 16px 14px; overflow: hidden; }
+.five-card .lb { font-size: .82rem; font-weight: 700; color: var(--muted); letter-spacing: .08em; }
+.five-card .v { font-family: var(--font-num); font-weight: 700; font-size: clamp(2.8rem, 15vw, 4rem); line-height: 1.05; color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.five-card .v small { font-size: 1.15rem; margin-left: 6px; color: var(--muted); letter-spacing: 0; }
+.five-card .at { font-size: .78rem; color: var(--muted); }
+.five-card .stamp { position: absolute; right: 12px; top: 10px; font-size: .8rem; font-weight: 700; color: var(--accent); border: 2px solid var(--accent); border-radius: 6px; padding: 0 8px; transform: rotate(-6deg); }
+.five-card.none .v { font-size: 1.4rem; color: var(--muted); font-weight: 600; }
+.five-card.none { border-left-color: var(--line); }
 </style>
 </head>
 <body>
@@ -809,8 +819,8 @@ function renderDay() {
           <div class="pills">${pills}</div>
         </div>
       </div>
-      <div class="kpis"${FIVE ? ' id="five-kpis"' : ""}>
-        ${FIVE ? FIVE_ITEMS.map(it => `<div class="kpi"><b>―</b><span>${it.short || it.label}</span></div>`).join("") : `<div class="kpi"><b>${fmt(km)} km</b><span>距離</span></div>
+      <div class="${FIVE ? "five-grid" : "kpis"}"${FIVE ? ' id="five-kpis"' : ""}>
+        ${FIVE ? FIVE_ITEMS.map(it => `<div class="five-card none"><div class="lb">${it.short || it.label}</div><div class="v">―</div></div>`).join("") : `<div class="kpi"><b>${fmt(km)} km</b><span>距離</span></div>
         <div class="kpi"><b>${fmt(L, 2)} L</b><span>燃料</span></div>
         <div class="kpi"><b>${dur(durS)}</b><span>運転時間</span></div>
         ${SIMPLE ? `<div class="kpi"><b>${fmt(km / Math.max(1e-9, durS / 3600), 0)} km/h</b><span>平均速度</span></div>` : `<div class="kpi"><b>${brakes} 回</b><span>急ブレーキ</span></div>`}`}
@@ -830,7 +840,7 @@ function renderDay() {
     Promise.all(dt.map(fiveMaxOf)).then(rs => {
       if (view !== "day" || dayKey !== day) return;
       const el = $("five-kpis"); if (!el) return;
-      el.innerHTML = FIVE_ITEMS.map((it, k) => { const v = rs.map(r => r && r[k]).filter(x => x != null); return `<div class="kpi">${fiveTile(it, v.length ? Math.max(...v) : null)}</div>`; }).join("");
+      el.innerHTML = FIVE_ITEMS.map((it, k) => { const v = rs.map(r => r && r[k]).filter(x => x != null); return fiveBig(it, v.length ? v.reduce((a, z) => z.v > a.v ? z : a) : null); }).join("");
     });
   } else gauge($("gauge"), kml, U);
   const pressed = box.querySelector('#days [aria-pressed="true"]'); pressed && pressed.scrollIntoView({ inline: "nearest", block: "nearest" });
@@ -1007,7 +1017,7 @@ async function openTrip(id) {
   $("d-charts").innerHTML = `<p class="note">グラフを読み込み中…</p>`;
   curSeries = await getSeries(id);
   if (current !== t) return;
-  if (FIVE && curSeries) { const mx = await fiveMaxOf(t); if (current !== t) return; $("d-stats").innerHTML = FIVE_ITEMS.map((it, k) => `<div class="stat">${fiveTile(it, mx && mx[k])}</div>`).join(""); }
+  if (FIVE && curSeries) { const mx = await fiveMaxOf(t); if (current !== t) return; $("d-stats").innerHTML = `<div class="five-grid">${FIVE_ITEMS.map((it, k) => fiveBig(it, mx && mx[k])).join("")}</div>`; }
   if (!curSeries) { $("d-charts").innerHTML = `<p class="note">この走行のグラフは、この端末にもクラウドにもありません。元の CSV か zip を読み込み直すと出ます。</p>`; return; }
   const avail = t.pids.filter(p => curSeries[p.name]);
   const pref = savedSel() || DEFAULT_PIDS;
@@ -1098,10 +1108,12 @@ const fiveMaxCache = new Map();
 async function fiveMaxOf(t) { // 走行ごとの最大値(1秒系列から)。無い項目は null → 「データなし」
   if (fiveMaxCache.has(t.id)) return fiveMaxCache.get(t.id);
   const S = await getSeries(t.id); if (!S) return null;
-  const r = FIVE_ITEMS.map(it => { const d = fiveData(it, S); if (!d) return null; let m = -Infinity; for (let i = 0; i < d.length; i++) if (d[i] > m) m = d[i]; return isFinite(m) ? m : null; });
+  const r = FIVE_ITEMS.map(it => { const d = fiveData(it, S); if (!d) return null; let m = -Infinity, at = -1; for (let i = 0; i < d.length; i++) if (d[i] > m) { m = d[i]; at = i; } return at < 0 ? null : { v: m, t: clock(t.startSec + at).slice(0, 5) }; });
   fiveMaxCache.set(t.id, r); return r;
 }
-const fiveTile = (it, v) => `<b>${v == null ? "データなし" : fmt(v, it.dec) + " " + it.unit}</b><span>${v == null ? "" : "最大 "}${it.short || it.label}</span>`;
+const fiveBig = (it, m) => m == null
+  ? `<div class="five-card none"><div class="lb">${it.short || it.label}</div><div class="v">データなし</div></div>`
+  : `<div class="five-card"><span class="stamp">最大</span><div class="lb">${it.short || it.label}</div><div class="v">${fmt(m.v, it.dec)}<small>${it.unit}</small></div><div class="at">${m.t} ごろ</div></div>`;
 function drawCharts() {
   const box = $("d-charts"); box.innerHTML = ""; charts = [];
   const list = FIVE ? FIVE_ITEMS.map(it => ({ name: it.label, unit: it.unit, data: fiveData(it, curSeries) }))
