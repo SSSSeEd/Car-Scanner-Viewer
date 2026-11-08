@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>走行ログ(5項目)</title>
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="theme-color" content="#151c22">
+<style>
+@font-face { font-family: "Chakra Petch"; font-weight: 600; font-display: swap; src: url(fonts/chakra-petch-600.woff) format("woff"); }
+@font-face { font-family: "Chakra Petch"; font-weight: 700; font-display: swap; src: url(fonts/chakra-petch-700.woff) format("woff"); }
+:root { --bg:#eef1f3; --surface:#fff; --fg:#141b21; --muted:#5b6a74; --line:#d6dde2; --accent:#c26d0a; --cluster:#151c22; --cluster-fg:#e9eef2; --btn:#1d6e8a; --curve:#1d6e8a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1418; --surface:#182027; --fg:#e5ebef; --muted:#91a1ab; --line:#2a353e; --accent:#f2a04a; --cluster:#0a0e11; --btn:#2b88a8; --curve:#63b6d3; } }
+* { box-sizing: border-box; margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: "Hiragino Sans","Noto Sans JP",system-ui,sans-serif; font-size: 18px; line-height: 1.5; padding-bottom: 48px; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-left)); }
+header { background: var(--cluster); color: var(--cluster-fg); padding: 16px 0; }
+header .wrap { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 20px; }
+a.back { color: var(--cluster-fg); font-size: 14px; opacity: .8; }
+.btn { background: var(--btn); color: #fff; border: 0; border-radius: 12px; padding: 14px 20px; font-size: 18px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+select { font-size: 17px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); max-width: 100%; flex: 1 1 220px; }
+.msg { color: var(--muted); padding: 24px 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+.card h2 { font-size: 20px; display: flex; justify-content: space-between; align-items: baseline; }
+.card h2 small { font-size: 14px; color: var(--muted); font-weight: 400; }
+.row { display: flex; gap: 12px; margin-top: 8px; }
+.cell { flex: 1; }
+.cell b { display: block; font-size: 13px; color: var(--muted); font-weight: 400; }
+.big { font-family: "Chakra Petch", ui-monospace, Menlo, Consolas, monospace; font-weight: 700; font-variant-numeric: tabular-nums; font-size: 38px; line-height: 1.15; }
+.big small { font-size: 16px; font-weight: 600; margin-left: 3px; color: var(--muted); }
+.max .big { color: var(--accent); }
+.when { font-size: 13px; color: var(--muted); }
+canvas { width: 100%; height: 90px; display: block; margin-top: 10px; touch-action: none; }
+.note { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.nodata { color: var(--muted); font-size: 20px; padding: 10px 0 4px; }
+.scrub { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 10px 0 6px; }
+.scrub input { width: 100%; height: 36px; }
+.scrub .t { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>走行ログ ― 5つの数字</h1>
+  <a class="back" href="index.html">← くわしい表示へ</a>
+</div></header>
+<main class="wrap">
+  <div class="bar">
+    <button class="btn" id="pick">CSVを選ぶ</button>
+    <select id="trips" hidden aria-label="走行を選ぶ"></select>
+    <input id="file" type="file" accept=".csv,text/csv" multiple hidden>
+  </div>
+  <div id="empty" class="msg">Car Scanner で書き出した CSV を選ぶと、回転数・速度・トルク・出力・水温と、それぞれの最大値を表示します。データはこの端末の中だけで処理され、外には送られません。</div>
+  <div id="view" hidden>
+    <div class="scrub">
+      <input id="slider" type="range" min="0" max="0" value="0" aria-label="時刻">
+      <div class="t"><span id="tnow"></span><span id="tdur"></span></div>
+    </div>
+    <div id="cards"></div>
+  </div>
+</main>
+<script>
+"use strict";
+// 5項目。candidates は CSV 内の PID 名(上から順に最初に見つかったものを使う)。
+// torque は CSV に列が無いため、出力と回転数からの計算値(T[N·m] = P[kW]×9549 ÷ 回転数)。
+const ITEMS = [
+  { key: "rpm", label: "回転数", unit: "rpm", dec: 0, pids: ["エンジン回転数"] },
+  { key: "spd", label: "速度", unit: "km/h", dec: 0, pids: ["自動車速度"] },
+  { key: "trq", label: "トルク", unit: "N·m", dec: 0, derived: true, note: "出力と回転数からの計算値(車が直接測った値ではありません)" },
+  { key: "pwr", label: "出力", unit: "hp", dec: 1, pids: ["Power from MAF", "瞬時エンジン出力 (燃費)"], note: "空気流量から求めた推定値(アプリ算出)" },
+  { key: "tmp", label: "水温", unit: "℃", dec: 0, pids: ["冷却水温度"] },
+];
+const HP_KW = 0.7457, MIN_RPM = 1000; // 低回転では計算が不安定なのでトルクは出さない
+const $ = id => document.getElementById(id);
+let cur = null, charts = [];
+
+// ---- CSV読み込み(長形式 "SECONDS";"PID";"VALUE";"UNITS" と 横長形式 time,"PID (unit)",...) ----
+function parseCsv(name, text) {
+  const raw = new Map(), lines = text.split(/\r?\n/), first = lines[0] || "";
+  const add = (p, t, v) => { let r = raw.get(p); if (!r) raw.set(p, r = { t: [], v: [] }); r.t.push(t); r.v.push(v); };
+  let prev = -Infinity, off = 0;
+  const wrap = t => { if (t + off < prev - 3600) off += 86400; t += off; prev = t; return t; };
+  if (first.startsWith('"SECONDS"')) {
+    for (let i = 1; i < lines.length; i++) {
+      const f = lines[i].split('";"'); if (f.length < 3) continue;
+      const t = parseFloat(f[0].replace(/"/g, "")), v = parseFloat(f[2]);
+      if (isFinite(t) && isFinite(v)) add(f[1], wrap(t), v);
+    }
+  } else if (first.startsWith("time,")) {
+    const cols = first.split(",").slice(1).map(h => h.replace(/^"|"$/g, "").replace(/ \([^()]*\)$/, ""));
+    for (let i = 1; i < lines.length; i++) {
+      const f = lines[i].split(","), h = (f[0] || "").split(":"); if (h.length !== 3) continue;
+      const t = wrap(+h[0] * 3600 + +h[1] * 60 + parseFloat(h[2]));
+      for (let j = 1; j < f.length && j <= cols.length; j++) { const v = parseFloat(f[j]); if (f[j] !== "" && isFinite(v)) add(cols[j - 1], t, v); }
+    }
+  } else throw new Error(name + ": 想定と違う形式です");
+  if (!raw.size) throw new Error(name + ": データがありません");
+  let t0 = Infinity, t1 = -Infinity;
+  for (const r of raw.values()) { t0 = Math.min(t0, r.t[0]); t1 = Math.max(t1, r.t[r.t.length - 1]); }
+  t0 = Math.floor(t0);
+  const len = Math.ceil(t1) - t0 + 1, series = {};
+  for (const [p, r] of raw) {
+    const a = new Float32Array(len).fill(NaN);
+    for (let j = 0; j < r.t.length; j++) a[Math.floor(r.t[j]) - t0] = r.v[j];
+    series[p] = a;
+  }
+  return { name, series, len };
+}
+
+// 1秒ごとの欠けは直前値で最大5秒だけ埋める(水温のように遅い項目向け)
+function fill(a) { const o = Float32Array.from(a); let last = NaN, age = 99; for (let i = 0; i < o.length; i++) { if (isNaN(o[i])) { if (age < 5) o[i] = last; age++; } else { last = o[i]; age = 0; } } return o; }
+
+function build(trip) {
+  const S = {};
+  for (const [p, a] of Object.entries(trip.series)) S[p] = fill(a);
+  const out = [];
+  for (const it of ITEMS) {
+    let data = null, used = null;
+    if (it.derived) {
+      const pw = S["Power from MAF"] || S["瞬時エンジン出力 (燃費)"], rp = S["エンジン回転数"];
+      if (pw && rp) {
+        data = new Float32Array(trip.len).fill(NaN);
+        for (let i = 0; i < trip.len; i++) if (rp[i] >= MIN_RPM && !isNaN(pw[i])) data[i] = pw[i] * HP_KW * 9549 / rp[i];
+        used = "計算";
+      }
+    } else {
+      for (const p of it.pids) if (S[p]) { data = S[p]; used = p; break; }
+    }
+    let max = -Infinity, at = -1, sum = 0, n = 0;
+    if (data) for (let i = 0; i < data.length; i++) { const v = data[i]; if (isNaN(v)) continue; sum += v; n++; if (v > max) { max = v; at = i; } }
+    out.push({ it, data: n ? data : null, max, at, avg: n ? sum / n : NaN, used });
+  }
+  return out;
+}
+
+const fmt = (v, d) => isNaN(v) ? "―" : v.toFixed(d);
+const clock = s => { s = Math.round(s); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+
+function render(trip) {
+  cur = trip; trip.rows = build(trip);
+  const box = $("cards"); box.innerHTML = ""; charts = [];
+  for (const r of trip.rows) {
+    const c = document.createElement("section"); c.className = "card";
+    let h = `<h2>${r.it.label}<small>${r.it.unit}</small></h2>`;
+    if (!r.data) {
+      h += `<div class="nodata">データなし</div><div class="note">この CSV には「${r.it.label}」の記録がありませんでした。</div>`;
+      c.innerHTML = h; box.appendChild(c); continue;
+    }
+    h += `<div class="row"><div class="cell max"><b>最大値</b><span class="big">${fmt(r.max, r.it.dec)}<small>${r.it.unit}</small></span><div class="when">走り始めから ${clock(r.at)} のとき</div></div>
+          <div class="cell"><b>この時点</b><span class="big" data-now="${r.it.key}">―<small>${r.it.unit}</small></span><div class="when">平均 ${fmt(r.avg, r.it.dec)} ${r.it.unit}</div></div></div>
+          <canvas data-k="${r.it.key}"></canvas>`;
+    if (r.it.note) h += `<div class="note">${r.it.note}${r.it.key === "pwr" && r.used !== "Power from MAF" ? "(使用: " + r.used + ")" : ""}</div>`;
+    if (r.it.derived) h += `<div class="note">回転数が ${MIN_RPM} rpm 未満の間は計算しません。</div>`;
+    c.innerHTML = h; box.appendChild(c);
+    charts.push({ r, cv: c.querySelector("canvas") });
+  }
+  const s = $("slider"); s.max = trip.len - 1; s.value = 0;
+  $("tdur").textContent = "全体 " + clock(trip.len - 1);
+  $("view").hidden = false; $("empty").hidden = true;
+  paint();
+}
+
+function paint() {
+  const i = +$("slider").value;
+  $("tnow").textContent = "いま " + clock(i);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  for (const { r, cv } of charts) {
+    const v = r.data[i], el = document.querySelector(`[data-now="${r.it.key}"]`);
+    el.firstChild.nodeValue = fmt(v, r.it.dec);
+    const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+    cv.width = w * dpr; cv.height = h * dpr;
+    const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+    const n = r.data.length, lo = Math.min(0, ...[...r.data].filter(x => !isNaN(x))), hi = r.max;
+    const X = k => k / Math.max(1, n - 1) * w, Y = x => h - 4 - (x - lo) / ((hi - lo) || 1) * (h - 12);
+    g.strokeStyle = css("--curve"); g.lineWidth = 1.5; g.beginPath();
+    let pen = false;
+    for (let k = 0; k < n; k++) { const x = r.data[k]; if (isNaN(x)) { pen = false; continue; } pen ? g.lineTo(X(k), Y(x)) : g.moveTo(X(k), Y(x)); pen = true; }
+    g.stroke();
+    g.fillStyle = css("--accent"); g.beginPath(); g.arc(X(r.at), Y(r.max), 5, 0, 7); g.fill();   // 最大値の位置
+    g.strokeStyle = css("--muted"); g.lineWidth = 1; g.beginPath(); g.moveTo(X(i), 0); g.lineTo(X(i), h); g.stroke(); // 現在位置
+  }
+}
+
+// ---- 入力 ----
+const trips = [];
+function addTrips(list) {
+  for (const t of list) trips.push(t);
+  const sel = $("trips"); sel.innerHTML = trips.map((t, k) => `<option value="${k}">${t.name}</option>`).join("");
+  sel.hidden = trips.length < 2; sel.value = String(trips.length - list.length);
+  render(trips[trips.length - list.length]);
+}
+$("pick").onclick = () => $("file").click();
+$("file").onchange = async e => {
+  const out = [];
+  for (const f of e.target.files) {
+    try { out.push(parseCsv(f.name, await f.text())); } catch (err) { $("empty").hidden = false; $("empty").textContent = err.message; }
+  }
+  if (out.length) addTrips(out);
+  e.target.value = "";
+};
+$("trips").onchange = e => render(trips[+e.target.value]);
+$("slider").oninput = paint;
+addEventListener("resize", () => cur && paint());
+
+// くわしい表示(index.html)で保存済みの走行があれば、同じ端末からそのまま読む
+(function loadSaved() {
+  try {
+    const rq = indexedDB.open("drive-data-web");
+    rq.onupgradeneeded = () => rq.transaction.abort();
+    rq.onsuccess = () => {
+      const d = rq.result;
+      if (!d.objectStoreNames.contains("series")) return d.close();
+      const out = [], cr = d.transaction("series").objectStore("series").openCursor();
+      cr.onsuccess = () => {
+        const c = cr.result;
+        if (c) {
+          const { id, series } = c.value, S = {}; let len = 0;
+          for (const [p, a] of Object.entries(series || {})) { S[p] = a; len = Math.max(len, a.length); }
+          if (len) out.push({ name: id, series: S, len });
+          return c.continue();
+        }
+        d.close();
+        if (out.length && !trips.length) { out.sort((a, b) => b.name.localeCompare(a.name)); addTrips(out); }
+      };
+    };
+  } catch {}
+})();
+</script>
+</body>
+</html>
