@@ -79,6 +79,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .tabs button[aria-selected="true"] { color: var(--fg); box-shadow: inset 0 -3px 0 var(--accent); }
 main.wrap { display: flex; flex-direction: column; gap: 16px; padding-block: 18px 0; }
 section { display: flex; flex-direction: column; gap: 14px; }
+[hidden] { display: none !important; }
 
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .card h3 { margin: 0; font-size: 1rem; }
@@ -185,12 +186,10 @@ details[open] summary { margin-bottom: 8px; }
 .chart canvas { display: block; width: 100%; height: 96px; touch-action: pan-y; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 body.simple #cloud, body.simple #wx { display: none; }
-/* 5項目表示: 回転数・速度・トルク・出力・水温と最大値だけ。燃費・診断・まとめは出さない */
-body.five #tab-day, body.five #tab-ov, body.five #mode, body.five #cloud, body.five #wx,
-body.five #d-stats, body.five #d-diag, body.five #d-pick, body.five .trip .eco, body.five .trip .meta .good, body.five .trip .meta .bad, body.five .note-fuel { display: none; }
-.chart-max { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 2px; font-size: .78rem; color: var(--muted); }
-.chart-max b { font-family: var(--font-num); font-size: 1.5rem; color: var(--accent); }
-.chart.nodata .chart-max b { font-size: 1.1rem; color: var(--muted); }
+/* 5項目表示(回転数・速度・トルク・出力・水温と最大値): 画面の作りは元のまま、燃費まわりの中身だけ入れ替える */
+body.five #tab-ov, body.five #mode, body.five #cloud, body.five #wx, body.five #d-diag, body.five #d-pick,
+body.five .hero, body.five .trip .eco, body.five .trip .meta .good, body.five .trip .meta .bad, body.five .tc .e, body.five .note-fuel { display: none; }
+body.five .kpis { grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
 </style>
 </head>
 <body>
@@ -324,7 +323,7 @@ async function retry(fn) {
 }
 // the cloud copy keeps the items worth replaying, every 2 s at 8-bit resolution (about 15 KB per 30 min);
 // this device keeps the full per-second series of every item
-const CLOUD_PIDS = ["自動車速度", "エンジン回転数", "瞬時燃料消費量(リットル/時)", "冷却水温度", "スロットル位置", "スロットル相対位置", "加速", "吸気温度", "インテークマニホールド圧力(絶対値)", "空気流量", "エンジン負荷の計画値", "電圧 (ELM327)", "ECU電圧", "短期調整 - ユニット 1", "長期調整 - ユニット 1"];
+const CLOUD_PIDS = ["自動車速度", "エンジン回転数", "瞬時燃料消費量(リットル/時)", "冷却水温度", "スロットル位置", "スロットル相対位置", "加速", "吸気温度", "インテークマニホールド圧力(絶対値)", "空気流量", "Power from MAF", "瞬時エンジン出力 (燃費)", "エンジン負荷の計画値", "電圧 (ELM327)", "ECU電圧", "短期調整 - ユニット 1", "長期調整 - ユニット 1"];
 function packSeries(series) {
   const names = CLOUD_PIDS.filter(nm => series[nm]); if (!names.length) return null;
   const len = series[names[0]].length, budget = 180000;
@@ -700,7 +699,7 @@ const dayOf = ms => { const d = new Date(ms); return `${d.getFullYear()}-${Strin
 const dayLabel = k => { const d = new Date(k + "T00:00"); return `${d.getMonth() + 1}月${d.getDate()}日（${"日月火水木金土"[d.getDay()]}）`; };
 
 function show(v) {
-  if (FIVE && (v === "day" || v === "ov")) v = "list";
+  if (FIVE && v === "ov") v = "day";
   if (v !== "detail") prevView = v;
   view = v;
   for (const x of VIEWS) $(x === "detail" ? "detail" : "v-" + x).hidden = x !== v;
@@ -761,7 +760,7 @@ function renderDay() {
     diff >= 0.5 ? `いつもより燃費が良い日でした` : diff <= -1.5 ? `いつもより燃費が悪い日でした` : `いつも通りの燃費でした`;
 
   // advice
-  const adv = [];
+  let adv = [];
   const ex = U && isFinite(kml) ? dayExplain(dt) : null;
   if (ex && Math.abs(diff) >= 0.5) {
     const main = ex.filter(p => (diff < 0 ? p.eff < -0.15 : p.eff > 0.15)).slice(0, 2);
@@ -797,6 +796,7 @@ function renderDay() {
     adv.unshift(["mid", "この日の数字", `走った距離は <strong>${fmt(km)} km</strong>、運転時間は <strong>${dur(durS)}</strong>、平均 <strong>${fmt(sp, 0)} km/h</strong>、最高 <strong>${fmt(mx, 0)} km/h</strong> でした。`]);
   }
 
+  if (FIVE) adv = [];
   box.innerHTML = `
     <div class="days" id="days">${days.slice(0, 14).map(k => { const d = new Date(k + "T00:00"); return `<button type="button" data-k="${k}" aria-pressed="${k === dayKey}"><span>${d.getMonth() + 1}/${d.getDate()}</span><b>${"日月火水木金土"[d.getDay()]}</b></button>`; }).join("")}</div>
     <div class="card">
@@ -809,11 +809,11 @@ function renderDay() {
           <div class="pills">${pills}</div>
         </div>
       </div>
-      <div class="kpis">
-        <div class="kpi"><b>${fmt(km)} km</b><span>距離</span></div>
+      <div class="kpis"${FIVE ? ' id="five-kpis"' : ""}>
+        ${FIVE ? FIVE_ITEMS.map(it => `<div class="kpi"><b>―</b><span>${it.short || it.label}</span></div>`).join("") : `<div class="kpi"><b>${fmt(km)} km</b><span>距離</span></div>
         <div class="kpi"><b>${fmt(L, 2)} L</b><span>燃料</span></div>
         <div class="kpi"><b>${dur(durS)}</b><span>運転時間</span></div>
-        ${SIMPLE ? `<div class="kpi"><b>${fmt(km / Math.max(1e-9, durS / 3600), 0)} km/h</b><span>平均速度</span></div>` : `<div class="kpi"><b>${brakes} 回</b><span>急ブレーキ</span></div>`}
+        ${SIMPLE ? `<div class="kpi"><b>${fmt(km / Math.max(1e-9, durS / 3600), 0)} km/h</b><span>平均速度</span></div>` : `<div class="kpi"><b>${brakes} 回</b><span>急ブレーキ</span></div>`}`}
       </div>
     </div>
     ${adv.length ? `<div class="card"><h3>今日のひとこと</h3><ul class="advice">${adv.map(([st, h, p]) => `<li class="${st}"><div><h4>${h}</h4><p>${p}</p></div></li>`).join("")}</ul></div>` : ""}
@@ -825,7 +825,14 @@ function renderDay() {
   box.querySelectorAll("#days button").forEach(b => b.onclick = () => { dayKey = b.dataset.k; renderDay(); });
   box.querySelectorAll(".tc").forEach(b => b.onclick = () => openTrip(decodeURIComponent(b.dataset.id)));
   box.querySelectorAll(".tc canvas").forEach(cv => spark(cv, dt[+cv.dataset.i].spark || []));
-  gauge($("gauge"), kml, U);
+  if (FIVE) {
+    const day = dayKey;
+    Promise.all(dt.map(fiveMaxOf)).then(rs => {
+      if (view !== "day" || dayKey !== day) return;
+      const el = $("five-kpis"); if (!el) return;
+      el.innerHTML = FIVE_ITEMS.map((it, k) => { const v = rs.map(r => r && r[k]).filter(x => x != null); return `<div class="kpi">${fiveTile(it, v.length ? Math.max(...v) : null)}</div>`; }).join("");
+    });
+  } else gauge($("gauge"), kml, U);
   const pressed = box.querySelector('#days [aria-pressed="true"]'); pressed && pressed.scrollIntoView({ inline: "nearest", block: "nearest" });
 }
 function dayExplain(dt) {
@@ -995,11 +1002,12 @@ async function openTrip(id) {
     [fmt(t.distKm, 2) + " km", "距離"], [dur(t.durS), "時間"], [fmt(t.kmPerL) + " km/L", "燃費"],
     [fmt(t.fuelL, 2) + " L", "使った燃料"], [fmt(t.distKm / (t.durS / 3600)) + " km/h", "平均速度"], [fmt(t.maxKmh, 0) + " km/h", "最高速度"]
   ];
-  $("d-stats").innerHTML = stats.map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
+  $("d-stats").innerHTML = FIVE ? "" : stats.map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
   renderDiag(t);
   $("d-charts").innerHTML = `<p class="note">グラフを読み込み中…</p>`;
   curSeries = await getSeries(id);
   if (current !== t) return;
+  if (FIVE && curSeries) { const mx = await fiveMaxOf(t); if (current !== t) return; $("d-stats").innerHTML = FIVE_ITEMS.map((it, k) => `<div class="stat">${fiveTile(it, mx && mx[k])}</div>`).join(""); }
   if (!curSeries) { $("d-charts").innerHTML = `<p class="note">この走行のグラフは、この端末にもクラウドにもありません。元の CSV か zip を読み込み直すと出ます。</p>`; return; }
   const avail = t.pids.filter(p => curSeries[p.name]);
   const pref = savedSel() || DEFAULT_PIDS;
@@ -1072,38 +1080,38 @@ function renderDiag(t) {
 const FIVE_ITEMS = [
   { name: "エンジン回転数", label: "回転数", unit: "rpm", dec: 0 },
   { name: SP, label: "速度", unit: "km/h", dec: 0 },
-  { name: "トルク", label: "トルク(出力と回転数からの計算値)", unit: "N·m", dec: 0, torque: true },
-  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", unit: "hp", dec: 1 },
+  { name: "トルク", label: "トルク(出力と回転数からの計算値)", short: "トルク", unit: "N·m", dec: 0, torque: true },
+  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", short: "出力", unit: "hp", dec: 1 },
   { name: CT, label: "水温", unit: "℃", dec: 0 },
 ];
-function fiveData(it) {
+function fiveData(it, S) {
   if (it.torque) {
-    const pw = curSeries["Power from MAF"] || curSeries["瞬時エンジン出力 (燃費)"], rp = curSeries[RPM];
+    const pw = S["Power from MAF"] || S["瞬時エンジン出力 (燃費)"], rp = S[RPM];
     if (!pw || !rp) return null;
     const o = new Float32Array(rp.length).fill(NaN);
     for (let i = 0; i < rp.length; i++) if (rp[i] >= 1000 && isFinite(pw[i])) o[i] = pw[i] * 0.7457 * 9549 / rp[i]; // 1000rpm未満は計算しない
     return o;
   }
-  return curSeries[it.name] || (it.alt && curSeries[it.alt]) || null;
+  return S[it.name] || (it.alt && S[it.alt]) || null;
 }
+const fiveMaxCache = new Map();
+async function fiveMaxOf(t) { // 走行ごとの最大値(1秒系列から)。無い項目は null → 「データなし」
+  if (fiveMaxCache.has(t.id)) return fiveMaxCache.get(t.id);
+  const S = await getSeries(t.id); if (!S) return null;
+  const r = FIVE_ITEMS.map(it => { const d = fiveData(it, S); if (!d) return null; let m = -Infinity; for (let i = 0; i < d.length; i++) if (d[i] > m) m = d[i]; return isFinite(m) ? m : null; });
+  fiveMaxCache.set(t.id, r); return r;
+}
+const fiveTile = (it, v) => `<b>${v == null ? "データなし" : fmt(v, it.dec) + " " + it.unit}</b><span>${v == null ? "" : "最大 "}${it.short || it.label}</span>`;
 function drawCharts() {
   const box = $("d-charts"); box.innerHTML = ""; charts = [];
-  const list = FIVE ? FIVE_ITEMS.map(it => ({ it, name: it.label, unit: it.unit, data: fiveData(it) }))
+  const list = FIVE ? FIVE_ITEMS.map(it => ({ name: it.label, unit: it.unit, data: fiveData(it, curSeries) }))
     : current.pids.filter(p => selected.has(p.name) && curSeries[p.name]).map(p => ({ name: p.name, unit: p.unit, data: curSeries[p.name] }));
   for (const p of list) {
     const el = document.createElement("div"); el.className = "chart";
-    el.innerHTML = `<div class="chart-head"><span></span><span class="val"></span></div>` + (FIVE ? `<div class="chart-max"><span>最大値</span><b></b><span class="at"></span></div>` : "") + `<canvas></canvas>`;
+    el.innerHTML = `<div class="chart-head"><span></span><span class="val"></span></div><canvas></canvas>`;
     el.querySelector(".chart-head span").textContent = p.unit ? `${p.name}（${p.unit}）` : p.name;
     box.appendChild(el);
-    let mx = -Infinity, at = -1;
-    if (p.data) for (let i = 0; i < p.data.length; i++) if (p.data[i] > mx) { mx = p.data[i]; at = i; }
-    if (FIVE) {
-      const b = el.querySelector(".chart-max b");
-      if (at < 0) { el.classList.add("nodata"); b.textContent = "データなし"; el.querySelector("canvas").remove(); el.querySelector(".at").textContent = ""; continue; }
-      b.textContent = `${fmt(mx, p.it.dec)} ${p.unit}`;
-      el.querySelector(".at").textContent = `${clock(current.startSec + at).slice(0, 5)} ごろ`;
-    }
-    if (!p.data) continue;
+    if (!p.data) { el.querySelector("canvas").remove(); el.querySelector(".val").textContent = "データなし"; continue; }
     const c = { el, canvas: el.querySelector("canvas"), val: el.querySelector(".val"), data: p.data, unit: p.unit };
     charts.push(c); bindPointer(c.canvas);
   }
