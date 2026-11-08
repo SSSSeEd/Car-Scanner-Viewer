@@ -205,6 +205,7 @@ body.five .stats { display: block; }
 .five-card .info { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: .86rem; line-height: 1.7; }
 .five-card.open .info { display: block; }
 .five-card .info p { margin: 0 0 6px; }
+.five-card .sub { color: var(--muted); font-size: .78rem; }
 .five-card .info b { font-family: var(--font-num); }
 .five-card.none .v { font-size: 1.4rem; color: var(--muted); font-weight: 600; }
 .five-card.none { border-left-color: var(--line); }
@@ -850,7 +851,7 @@ function renderDay() {
     Promise.all(dt.map(fiveMaxOf)).then(rs => {
       if (view !== "day" || dayKey !== day) return;
       const el = $("five-kpis"); if (!el) return;
-      el.innerHTML = FIVE_ITEMS.map((it, k) => { const v = rs.map(r => r && r[k]).filter(x => x != null); return fiveBig(it, v.length ? v.reduce((a, z) => z.v > a.v ? z : a) : null); }).join("");
+      el.innerHTML = FIVE_ITEMS.map((it, k) => { const v = rs.map(r => r && r[k]).filter(x => x != null); return fiveBig(it, v.length ? v.reduce((a, z) => z.v > a.v ? z : a) : null, v.length > 1 ? "複数の走行のうち、最大が出た走行の内訳です。" : ""); }).join("");
     });
   } else gauge($("gauge"), kml, U);
   const pressed = box.querySelector('#days [aria-pressed="true"]'); pressed && pressed.scrollIntoView({ inline: "nearest", block: "nearest" });
@@ -1027,7 +1028,7 @@ async function openTrip(id) {
   $("d-charts").innerHTML = `<p class="note">グラフを読み込み中…</p>`;
   curSeries = await getSeries(id);
   if (current !== t) return;
-  if (FIVE && curSeries) { const mx = await fiveMaxOf(t); if (current !== t) return; $("d-stats").innerHTML = `<div class="five-grid">${FIVE_ITEMS.map((it, k) => fiveBig(it, mx && mx[k], true)).join("")}</div>`; }
+  if (FIVE && curSeries) { const mx = await fiveMaxOf(t); if (current !== t) return; $("d-stats").innerHTML = `<div class="five-grid">${FIVE_ITEMS.map((it, k) => fiveBig(it, mx && mx[k])).join("")}</div>`; }
   if (!curSeries) { $("d-charts").innerHTML = `<p class="note">この走行のグラフは、この端末にもクラウドにもありません。元の CSV か zip を読み込み直すと出ます。</p>`; return; }
   const avail = t.pids.filter(p => curSeries[p.name]);
   const pref = savedSel() || DEFAULT_PIDS;
@@ -1098,11 +1099,11 @@ function renderDiag(t) {
 
 // 5項目表示で出す項目。トルクは CSV に列が無いので、出力と回転数からの計算値(T[N·m] = P[kW]×9549 ÷ 回転数)。
 const FIVE_ITEMS = [
-  { name: "エンジン回転数", label: "回転数", unit: "rpm", dec: 0, info: "エンジンが1分間に何回転しているかです。数字が大きいほど、エンジンを強く回しています。アクセルを踏み込んだとき、坂を上るとき、低いギアで加速するときに上がります。" },
-  { name: SP, label: "速度", unit: "km/h", dec: 0, info: "車の走る速さです。車が自分で測った速度の値を、そのまま使っています(メーターの表示とは少しずれることがあります)。" },
-  { name: "トルク", label: "トルク(出力と回転数からの計算値)", short: "トルク", unit: "N·m", dec: 0, torque: true, info: "エンジンがタイヤを回そうとする力の強さです。発進や追い越しの「ぐっと押し出される感じ」に近い数字です。車が直接測った値ではなく、出力と回転数から計算した値です。回転数が1,000rpm未満のときは計算していません。" },
-  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", short: "出力", unit: "hp", dec: 1, info: "エンジンが出している力の大きさです。取り込んだ空気の量から推定した値で、実際の出力とはずれることがあります。(hp は馬力の単位です)" },
-  { name: CT, label: "水温", unit: "℃", dec: 0, info: "エンジンを冷やす水の温度です。冷えた状態から走ると少しずつ上がり、暖まると一定のあたりで落ち着くのが普通です。落ち着く温度は車種で違います。走行中に急に上がり続けるときは注意してください。" },
+  { name: "エンジン回転数", label: "回転数", unit: "rpm", dec: 0 },
+  { name: SP, label: "速度", unit: "km/h", dec: 0 },
+  { name: "トルク", label: "トルク(出力と回転数からの計算値)", short: "トルク", unit: "N·m", dec: 0, torque: true },
+  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", short: "出力", unit: "hp", dec: 1 },
+  { name: CT, label: "水温", unit: "℃", dec: 0 },
 ];
 function fiveData(it, S) {
   if (it.torque) {
@@ -1115,16 +1116,49 @@ function fiveData(it, S) {
   return S[it.name] || (it.alt && S[it.alt]) || null;
 }
 const fiveMaxCache = new Map();
+// その走行のデータから言えること(定義ではなく、平均・割合・最大のときの様子など)
+function fiveFacts(it, S, d, at, t) {
+  const f = [], rp = S[RPM], sp = S[SP]; let n = 0, sum = 0;
+  for (const x of d) if (isFinite(x)) { n++; sum += x; }
+  const share = fn => { let c = 0; for (const x of d) if (isFinite(x) && fn(x)) c++; return c; };
+  const pct = c => Math.round(c / n * 100), avg = sum / n;
+  const at_ = (arr, u, dec = 0) => arr && isFinite(arr[at]) ? `${fmt(arr[at], dec)} ${u}` : null;
+  if (it.name === RPM) {
+    f.push(`平均は <b>${fmt(avg, 0)} rpm</b>。`);
+    const c = share(x => x >= 3000);
+    f.push(c ? `3,000rpm以上だったのは全体の <b>${pct(c)}%</b>（${dur(c)}）。` : `3,000rpm以上になることはありませんでした。`);
+    const v = at_(sp, "km/h"); if (v) f.push(`最大のときの速度は <b>${v}</b>。`);
+  } else if (it.name === SP) {
+    const mv = share(x => x >= 1), st = share(x => x < 1);
+    f.push(`止まっていた時間は全体の <b>${pct(st)}%</b>（${dur(st)}）。`);
+    if (mv) { let s2 = 0; for (const x of d) if (isFinite(x) && x >= 1) s2 += x; f.push(`走っている間の平均は <b>${fmt(s2 / mv, 0)} km/h</b>。`); }
+    const c = share(x => x >= 80); if (c) f.push(`80km/h以上だったのは <b>${dur(c)}</b>。`);
+  } else if (it.torque) {
+    f.push(`回転数1,000rpm以上のときの平均は <b>${fmt(avg, 0)} N·m</b>。`);
+    const v = at_(rp, "rpm"); if (v) f.push(`最大のときの回転数は <b>${v}</b>、速度は <b>${at_(sp, "km/h") || "―"}</b>。`);
+    f.push(`<span class="sub">※出力と回転数からの計算値です。</span>`);
+  } else if (it.alt) {
+    f.push(`平均は <b>${fmt(avg, 1)} hp</b>。`);
+    const v = at_(rp, "rpm"); if (v) f.push(`最大のときの回転数は <b>${v}</b>、速度は <b>${at_(sp, "km/h") || "―"}</b>。`);
+    f.push(`<span class="sub">※空気流量から求めた推定値です。</span>`);
+  } else if (it.name === CT) {
+    let first = NaN, i80 = -1, last = NaN;
+    for (let i = 0; i < d.length; i++) if (isFinite(d[i])) { if (!isFinite(first)) first = d[i]; last = d[i]; if (i80 < 0 && d[i] >= 80) i80 = i; }
+    f.push(`走り始めは <b>${fmt(first, 0)}℃</b>、終わりは <b>${fmt(last, 0)}℃</b>。`);
+    f.push(i80 >= 0 ? `80℃に届くまで <b>${dur(i80)}</b>。` : `80℃には届きませんでした。`);
+  }
+  return f;
+}
 async function fiveMaxOf(t) { // 走行ごとの最大値(1秒系列から)。無い項目は null → 「データなし」
   if (fiveMaxCache.has(t.id)) return fiveMaxCache.get(t.id);
   const S = await getSeries(t.id); if (!S) return null;
-  const r = FIVE_ITEMS.map(it => { const d = fiveData(it, S); if (!d) return null; let m = -Infinity, at = -1, sum = 0, n = 0; for (let i = 0; i < d.length; i++) { const x = d[i]; if (!isFinite(x)) continue; sum += x; n++; if (x > m) { m = x; at = i; } } return at < 0 ? null : { v: m, t: clock(t.startSec + at).slice(0, 5), a: sum / n }; });
+  const r = FIVE_ITEMS.map(it => { const d = fiveData(it, S); if (!d) return null; let m = -Infinity, at = -1; for (let i = 0; i < d.length; i++) { const x = d[i]; if (isFinite(x) && x > m) { m = x; at = i; } } return at < 0 ? null : { v: m, t: clock(t.startSec + at).slice(0, 5), facts: fiveFacts(it, S, d, at, t) }; });
   fiveMaxCache.set(t.id, r); return r;
 }
-const fiveBig = (it, m, withAvg) => m == null
+const fiveBig = (it, m, note) => m == null
   ? `<div class="five-card none"><div class="lb">${it.short || it.label}</div><div class="v">データなし</div></div>`
-  : `<div class="five-card" role="button" tabindex="0" aria-expanded="false"><span class="stamp">最大</span><div class="lb">${it.short || it.label}</div><div class="v">${fmt(m.v, it.dec)}<small>${it.unit}</small></div><div class="at"><span class="more">説明</span>${m.t} ごろ</div>
-    <div class="info"><p>${it.info}</p>${withAvg && isFinite(m.a) ? `<p>この走行の平均は <b>${fmt(m.a, it.dec)} ${it.unit}</b> です。</p>` : ""}</div></div>`;
+  : `<div class="five-card" role="button" tabindex="0" aria-expanded="false"><span class="stamp">最大</span><div class="lb">${it.short || it.label}</div><div class="v">${fmt(m.v, it.dec)}<small>${it.unit}</small></div><div class="at"><span class="more">くわしく</span>${m.t} ごろ</div>
+    <div class="info">${m.facts.map(x => `<p>${x}</p>`).join("")}${note ? `<p class="sub">${note}</p>` : ""}</div></div>`;
 function drawCharts() {
   const box = $("d-charts"); box.innerHTML = ""; charts = [];
   const list = FIVE ? FIVE_ITEMS.map(it => ({ name: it.label, unit: it.unit, data: fiveData(it, curSeries) }))
