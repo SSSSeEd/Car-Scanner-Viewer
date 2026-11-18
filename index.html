@@ -840,12 +840,13 @@ function renderDay() {
     ${adv.length ? `<div class="card"><h3>今日のひとこと</h3><ul class="advice">${adv.map(([st, h, p]) => `<li class="${st}"><div><h4>${h}</h4><p>${p}</p></div></li>`).join("")}</ul></div>` : ""}
     <div class="card"><h3>この日の走行</h3><div class="tripcards">${dt.map((t, i) => {
       const e = explain(t);
-      return `<button type="button" class="tc" data-id="${encodeURIComponent(t.id)}"><span class="t">${clock(t.startSec).slice(0, 5)}</span><span class="m">${fmt(t.distKm)} km・${dur(t.durS)}・最高 ${fmt(t.maxKmh, 0)} km/h${(w => w ? `・${w.name} ${fmt(w.temp, 0)}℃` : "")(wxOf(t))}</span>
+      return `<button type="button" class="tc" data-id="${encodeURIComponent(t.id)}"><span class="t">${clock(t.startSec).slice(0, 5)}</span><span class="m">${fmt(t.distKm)} km・${dur(t.durS)}・最高 ${fmt(t.maxKmh, 0)} km/h${FIVE ? `<span class="pk" data-pk="${encodeURIComponent(t.id)}"></span>` : ""}${(w => w ? `・${w.name} ${fmt(w.temp, 0)}℃` : "")(wxOf(t))}</span>
         <span class="e">${fmt(t.kmPerL)}<small class="${e && e.diff >= 0 ? "good" : "bad"}">${e ? signed(e.diff) : ""}</small></span><canvas data-i="${i}"></canvas></button>`; }).join("")}</div>
       <p class="note">押すと、その走行の診断とグラフを開きます。</p></div>`;
   box.querySelectorAll("#days button").forEach(b => b.onclick = () => { dayKey = b.dataset.k; renderDay(); });
   box.querySelectorAll(".tc").forEach(b => b.onclick = () => openTrip(decodeURIComponent(b.dataset.id)));
   box.querySelectorAll(".tc canvas").forEach(cv => spark(cv, dt[+cv.dataset.i].spark || []));
+  fillPeaks(box);
   if (FIVE) {
     const day = dayKey;
     Promise.all(dt.map(fiveMaxOf)).then(rs => {
@@ -911,10 +912,24 @@ function renderList() {
     const ex = explain(t);
     const dev = ex ? `<span class="${ex.diff >= 0 ? "good" : "bad"}">平均比 ${signed(ex.diff)}</span>` : "";
     b.innerHTML = `<span class="when">${dateStr(t.startMs)}</span><span class="eco">${fmt(t.kmPerL)} km/L</span>
-      <span class="meta"><span>${fmt(t.distKm)} km</span><span>${dur(t.durS)}</span><span>最高 ${fmt(t.maxKmh, 0)} km/h</span>${dev}</span>`;
+      <span class="meta"><span>${fmt(t.distKm)} km</span><span>${dur(t.durS)}</span><span>最高 ${fmt(t.maxKmh, 0)} km/h</span>${FIVE ? `<span class="pk" data-pk="${encodeURIComponent(t.id)}"></span>` : ""}${dev}</span>`;
     b.onclick = () => openTrip(t.id);
     box.appendChild(b);
   }
+  fillPeaks(box);
+}
+// 5項目表示: 一覧の各走行に最大トルク・最大出力(どちらも推定値)を足す
+function fillPeaks(root) {
+  if (!FIVE) return;
+  root.querySelectorAll(".pk[data-pk]").forEach(async el => {
+    const t = trips.find(x => x.id === decodeURIComponent(el.dataset.pk)); if (!t) return;
+    const r = await fiveMaxOf(t); if (!r) return;
+    const ti = FIVE_ITEMS.findIndex(i => i.torque), pi = FIVE_ITEMS.findIndex(i => i.alt);
+    const parts = [];
+    if (r[ti]) parts.push(`最大トルク ${fmt(r[ti].v, 0)} N·m(推定)`);
+    if (r[pi]) parts.push(`最大出力 ${fmt(r[pi].v, 1)} hp(推定)`);
+    el.textContent = parts.length ? "・" + parts.join("・") : "";
+  });
 }
 
 // ---------- overview ----------
@@ -1101,8 +1116,8 @@ function renderDiag(t) {
 const FIVE_ITEMS = [
   { name: "エンジン回転数", label: "回転数", unit: "rpm", dec: 0 },
   { name: SP, label: "速度", unit: "km/h", dec: 0 },
-  { name: "トルク", label: "トルク(出力と回転数からの計算値)", short: "トルク", unit: "N·m", dec: 0, torque: true },
-  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", short: "出力", unit: "hp", dec: 1 },
+  { name: "トルク", label: "トルク(出力と回転数からの計算値)", short: "トルク(推定)", unit: "N·m", dec: 0, torque: true },
+  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", short: "出力(推定)", unit: "hp", dec: 1 },
   { name: CT, label: "水温", unit: "℃", dec: 0 },
 ];
 function fiveData(it, S) {
