@@ -1113,6 +1113,10 @@ function renderDiag(t) {
 }
 
 // 5項目表示で出す項目。トルクは CSV に列が無いので、出力と回転数からの計算値(T[N·m] = P[kW]×9549 ÷ 回転数)。
+// トルクの上限(N·m): 推定値がカタログ・実車の限界を超えた分は推定誤差として頭打ちにする。
+// 初期値52。?tqmax=48 のように指定するとこの端末に覚えます(?tqmax=0 で上限なし、?tqmax=reset で初期値に戻す)。
+let TQMAX = 52;
+try { const q = new URLSearchParams(location.search).get("tqmax"); if (q === "reset") localStorage.removeItem("ddw-tqmax"); else if (q !== null && isFinite(+q) && +q >= 0) localStorage.setItem("ddw-tqmax", q); const v = localStorage.getItem("ddw-tqmax"); if (v !== null && isFinite(+v) && +v >= 0) TQMAX = +v; } catch {}
 const FIVE_ITEMS = [
   { name: "エンジン回転数", label: "回転数", unit: "rpm", dec: 0 },
   { name: SP, label: "速度", unit: "km/h", dec: 0 },
@@ -1120,12 +1124,13 @@ const FIVE_ITEMS = [
   { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", short: "出力(推定)", unit: "hp", dec: 1 },
   { name: CT, label: "水温", unit: "℃", dec: 0 },
 ];
+const capTq = x => TQMAX > 0 && x > TQMAX ? TQMAX : x;
 function fiveData(it, S) {
   if (it.torque) {
     const pw = S["Power from MAF"] || S["瞬時エンジン出力 (燃費)"], rp = S[RPM];
     if (!pw || !rp) return null;
     const o = new Float32Array(rp.length).fill(NaN);
-    for (let i = 0; i < rp.length; i++) if (rp[i] >= 1000 && isFinite(pw[i])) o[i] = pw[i] * 0.7457 * 9549 / rp[i]; // 1000rpm未満は計算しない
+    for (let i = 0; i < rp.length; i++) if (rp[i] >= 1000 && isFinite(pw[i])) o[i] = capTq(pw[i] * 0.7457 * 9549 / rp[i]); // 1000rpm未満は計算しない
     return o;
   }
   return S[it.name] || (it.alt && S[it.alt]) || null;
@@ -1151,7 +1156,7 @@ function fiveFacts(it, S, d, at, t) {
   } else if (it.torque) {
     f.push(`回転数1,000rpm以上のときの平均は <b>${fmt(avg, 0)} N·m</b>。`);
     const v = at_(rp, "rpm"); if (v) f.push(`最大のときの回転数は <b>${v}</b>、速度は <b>${at_(sp, "km/h") || "―"}</b>。`);
-    f.push(`<span class="sub">※出力と回転数からの計算値です。</span>`);
+    f.push(`<span class="sub">※出力と回転数からの計算値(推定)です。${TQMAX > 0 ? `${TQMAX} N·m を超える分は推定の誤差として${TQMAX}で頭打ちにしています(?tqmax=数値 で変更)。` : ""}</span>`);
   } else if (it.alt) {
     f.push(`平均は <b>${fmt(avg, 1)} hp</b>。`);
     const v = at_(rp, "rpm"); if (v) f.push(`最大のときの回転数は <b>${v}</b>、速度は <b>${at_(sp, "km/h") || "―"}</b>。`);
