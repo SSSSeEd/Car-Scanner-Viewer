@@ -233,6 +233,9 @@ body.five .stats { display: block; }
 #day-toast { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); z-index: 50; pointer-events: none; opacity: 0; background: var(--cluster); color: var(--cluster-fg); font-family: var(--font-num); font-weight: 700; font-size: 1.5rem; padding: 10px 22px; border-radius: 14px; border: 2px solid var(--accent); }
 #day-toast.show { animation: dayToast 1.1s ease-out; }
 @keyframes dayToast { 0% { opacity: 0; transform: translateX(-50%) scale(.9); } 15%, 70% { opacity: .95; transform: translateX(-50%) scale(1); } 100% { opacity: 0; transform: translateX(-50%) scale(1); } }
+.five-dots { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.five-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.five-dots i.on { background: var(--accent); }
 .five-card.none .v { font-size: 1.4rem; color: var(--muted); font-weight: 600; }
 .five-card.none { border-left-color: var(--line); }
 </style>
@@ -863,6 +866,7 @@ function renderDay() {
         <div class="kpi"><b>${dur(durS)}</b><span>運転時間</span></div>
         ${SIMPLE ? `<div class="kpi"><b>${fmt(km / Math.max(1e-9, durS / 3600), 0)} km/h</b><span>平均速度</span></div>` : `<div class="kpi"><b>${brakes} 回</b><span>急ブレーキ</span></div>`}`}
       </div>
+      ${FIVE ? `<div class="five-dots" aria-hidden="true">${days.slice().reverse().map(d => `<i class="${d === dayKey ? "on" : ""}"></i>`).join("")}</div>` : ""}
     </div>
     ${adv.length ? `<div class="card"><h3>今日のひとこと</h3><ul class="advice">${adv.map(([st, h, p]) => `<li class="${st}"><div><h4>${h}</h4><p>${p}</p></div></li>`).join("")}</ul></div>` : ""}
     <div class="card"><h3>この日の走行</h3><div class="tripcards">${dt.map((t, i) => {
