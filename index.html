@@ -230,6 +230,9 @@ body.five .stats { display: block; }
 .dt td svg { display: block; width: 48px; height: 20px; margin-left: auto; }
 .dt td svg polyline { fill: none; stroke: var(--sel); stroke-width: 1.4; }
 .dt .sec td { background: var(--surface-2); font-family: var(--font-body); font-weight: 700; color: var(--muted); text-align: left; padding: 4px 10px; font-size: .72rem; }
+#day-toast { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); z-index: 50; pointer-events: none; opacity: 0; background: var(--cluster); color: var(--cluster-fg); font-family: var(--font-num); font-weight: 700; font-size: 1.5rem; padding: 10px 22px; border-radius: 14px; border: 2px solid var(--accent); }
+#day-toast.show { animation: dayToast 1.1s ease-out; }
+@keyframes dayToast { 0% { opacity: 0; transform: translateX(-50%) scale(.9); } 15%, 70% { opacity: .95; transform: translateX(-50%) scale(1); } 100% { opacity: 0; transform: translateX(-50%) scale(1); } }
 .five-card.none .v { font-size: 1.4rem; color: var(--muted); font-weight: 600; }
 .five-card.none { border-left-color: var(--line); }
 </style>
@@ -726,7 +729,7 @@ let usual = null; // per-person baselines for the day diagnosis
 let SIMPLE = true;
 try { SIMPLE = localStorage.getItem("ddw-simple") !== "0"; } catch {}
 // 回転数・速度・トルク・出力・水温だけの表示: ?five=1 で開くとオンになり、この端末に覚えます(?five=0 で戻す)
-let FIVE = false, FIVEMODE = "list";
+let FIVE = false, FIVEMODE = "list", flipDir = 0;
 try { const q = new URLSearchParams(location.search).get("five"); if (q === "1" || q === "0") localStorage.setItem("ddw-five", q); FIVE = localStorage.getItem("ddw-five") === "1"; FIVEMODE = localStorage.getItem("ddw-fivemode") === "simple" ? "simple" : "list"; } catch {}
 function applyMode() {
   document.body.classList.toggle("simple", SIMPLE);
@@ -887,15 +890,28 @@ function renderDay() {
       }
     };
     draw5();
-    box.querySelectorAll("#five-mode button").forEach(b => b.onclick = () => { FIVEMODE = b.dataset.m; try { localStorage.setItem("ddw-fivemode", FIVEMODE); } catch {} renderDay(); });
-    const go5 = n => { if (n >= 0 && n < days.length) { dayKey = days[n]; renderDay(); } };
+    if (flipDir) {
+      const dir = flipDir; flipDir = 0;
+      box.animate([{ transform: `translateX(${dir * 55}%)`, opacity: .2 }, { transform: "none", opacity: 1 }], { duration: 240, easing: "cubic-bezier(.2,.8,.2,1)" });
+      let tb = document.getElementById("day-toast"); if (!tb) { tb = document.createElement("div"); tb.id = "day-toast"; document.body.appendChild(tb); }
+      const d0 = new Date(day + "T00:00:00");
+      tb.textContent = `${dir > 0 ? "" : "◀ "}${d0.getMonth() + 1}/${d0.getDate()}（${"日月火水木金土"[d0.getDay()]}）${dir > 0 ? " ▶" : ""}`;
+      tb.classList.remove("show"); void tb.offsetWidth; tb.classList.add("show");
+    }
+    const go5 = (n, dir) => {
+      if (!(n >= 0 && n < days.length) || go5.busy) return;
+      go5.busy = true;
+      const out = box.animate([{ transform: "none", opacity: 1 }, { transform: `translateX(${-(dir || 1) * 55}%)`, opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" });
+      out.onfinish = () => { go5.busy = false; dayKey = days[n]; flipDir = dir || 1; renderDay(); out.cancel(); };
+    };
+    const inTable = e => !!(e.target.closest && e.target.closest(".dt"));
     const ix = days.indexOf(day);
-    $("day-prev").onclick = () => go5(ix + 1); $("day-next").onclick = () => go5(ix - 1);
+    $("day-prev").onclick = () => go5(ix + 1, -1); $("day-next").onclick = () => go5(ix - 1, 1);
     let x0 = null, y0 = null;
-    box.ontouchstart = e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; };
-    box.ontouchend = e => { if (x0 === null) return; const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0; x0 = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go5(dx < 0 ? ix - 1 : ix + 1); };
-    box.onpointerdown = e => { if (e.pointerType === "mouse") { x0 = e.clientX; y0 = e.clientY; } };
-    box.onpointerup = e => { if (e.pointerType !== "mouse" || x0 === null) return; const dx = e.clientX - x0, dy = e.clientY - y0; x0 = null; if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy) * 1.5) go5(dx < 0 ? ix - 1 : ix + 1); };
+    box.ontouchstart = e => { if (inTable(e)) { x0 = null; return; } x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; };
+    box.ontouchend = e => { if (x0 === null) return; const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0; x0 = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go5(dx < 0 ? ix - 1 : ix + 1, dx < 0 ? 1 : -1); };
+    box.onpointerdown = e => { if (e.pointerType === "mouse" && !inTable(e)) { x0 = e.clientX; y0 = e.clientY; } };
+    box.onpointerup = e => { if (e.pointerType !== "mouse" || x0 === null) return; const dx = e.clientX - x0, dy = e.clientY - y0; x0 = null; if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy) * 1.5) go5(dx < 0 ? ix - 1 : ix + 1, dx < 0 ? 1 : -1); };
   } else gauge($("gauge"), kml, U);
   const pressed = box.querySelector('#days [aria-pressed="true"]'); pressed && pressed.scrollIntoView({ inline: "nearest", block: "nearest" });
 }
