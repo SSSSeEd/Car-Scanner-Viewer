@@ -866,7 +866,7 @@ function renderDay() {
         <div class="kpi"><b>${dur(durS)}</b><span>運転時間</span></div>
         ${SIMPLE ? `<div class="kpi"><b>${fmt(km / Math.max(1e-9, durS / 3600), 0)} km/h</b><span>平均速度</span></div>` : `<div class="kpi"><b>${brakes} 回</b><span>急ブレーキ</span></div>`}`}
       </div>
-      ${FIVE ? `<div class="five-dots" aria-hidden="true">${days.slice().reverse().map(d => `<i class="${d === dayKey ? "on" : ""}"></i>`).join("")}</div>` : ""}
+      ${FIVE ? (() => { const rv = days.slice().reverse(), n = rv.length, ci = rv.indexOf(dayKey), st = Math.min(Math.max(ci - 1, 0), Math.max(n - 4, 0)); return `<div class="five-dots" aria-hidden="true">${rv.slice(st, st + 4).map(d => `<i class="${d === dayKey ? "on" : ""}"></i>`).join("")}</div>`; })() : ""}
     </div>
     ${adv.length ? `<div class="card"><h3>今日のひとこと</h3><ul class="advice">${adv.map(([st, h, p]) => `<li class="${st}"><div><h4>${h}</h4><p>${p}</p></div></li>`).join("")}</ul></div>` : ""}
     <div class="card"><h3>この日の走行</h3><div class="tripcards">${dt.map((t, i) => {
@@ -902,6 +902,8 @@ function renderDay() {
       tb.textContent = `${dir > 0 ? "" : "◀ "}${d0.getMonth() + 1}/${d0.getDate()}（${"日月火水木金土"[d0.getDay()]}）${dir > 0 ? " ▶" : ""}`;
       tb.classList.remove("show"); void tb.offsetWidth; tb.classList.add("show");
     }
+    const ix = days.indexOf(day);
+    box.querySelectorAll("#five-mode button").forEach(b => b.onclick = () => { FIVEMODE = b.dataset.m; try { localStorage.setItem("ddw-fivemode", FIVEMODE); } catch {} renderDay(); });
     const go5 = (n, dir) => {
       if (!(n >= 0 && n < days.length) || flipBusy) return;
       flipBusy = true; dir = dir || 1;
@@ -914,7 +916,6 @@ function renderDay() {
     // 前後の日のデータを裏で温めておく(次のフリックがすぐ表示される)
     (window.requestIdleCallback || (f => setTimeout(f, 300)))(() => { [days[ix - 1], days[ix + 1]].filter(Boolean).forEach(preloadDay); });
     const inTable = e => !!(e.target.closest && e.target.closest(".dt"));
-    const ix = days.indexOf(day);
     $("day-prev").onclick = () => go5(ix + 1, -1); $("day-next").onclick = () => go5(ix - 1, 1);
     let x0 = null, y0 = null;
     box.ontouchstart = e => { if (inTable(e)) { x0 = null; return; } x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; };
