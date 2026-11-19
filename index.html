@@ -732,7 +732,7 @@ let usual = null; // per-person baselines for the day diagnosis
 let SIMPLE = true;
 try { SIMPLE = localStorage.getItem("ddw-simple") !== "0"; } catch {}
 // 回転数・速度・トルク・出力・水温だけの表示: ?five=1 で開くとオンになり、この端末に覚えます(?five=0 で戻す)
-let FIVE = false, FIVEMODE = "list", flipDir = 0;
+let FIVE = false, FIVEMODE = "list", flipDir = 0, flipBusy = false;
 try { const q = new URLSearchParams(location.search).get("five"); if (q === "1" || q === "0") localStorage.setItem("ddw-five", q); FIVE = localStorage.getItem("ddw-five") === "1"; FIVEMODE = localStorage.getItem("ddw-fivemode") === "simple" ? "simple" : "list"; } catch {}
 function applyMode() {
   document.body.classList.toggle("simple", SIMPLE);
@@ -903,11 +903,16 @@ function renderDay() {
       tb.classList.remove("show"); void tb.offsetWidth; tb.classList.add("show");
     }
     const go5 = (n, dir) => {
-      if (!(n >= 0 && n < days.length) || go5.busy) return;
-      go5.busy = true;
-      const out = box.animate([{ transform: "none", opacity: 1 }, { transform: `translateX(${-(dir || 1) * 55}%)`, opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" });
-      out.onfinish = () => { go5.busy = false; dayKey = days[n]; flipDir = dir || 1; renderDay(); out.cancel(); };
+      if (!(n >= 0 && n < days.length) || flipBusy) return;
+      flipBusy = true; dir = dir || 1;
+      box.style.willChange = "transform, opacity";
+      // 次の日のデータを先に読み込んでおき、出ていく動きと同時に待つ(入ってくる画面が空のまま遅れて埋まるのを防ぐ)
+      const ready = preloadDay(days[n]);
+      const out = box.animate([{ transform: "none", opacity: 1 }, { transform: `translateX(${-dir * 55}%)`, opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" });
+      Promise.all([out.finished.catch(() => {}), ready]).then(() => { flipBusy = false; dayKey = days[n]; flipDir = dir; renderDay(); out.cancel(); box.style.willChange = ""; });
     };
+    // 前後の日のデータを裏で温めておく(次のフリックがすぐ表示される)
+    (window.requestIdleCallback || (f => setTimeout(f, 300)))(() => { [days[ix - 1], days[ix + 1]].filter(Boolean).forEach(preloadDay); });
     const inTable = e => !!(e.target.closest && e.target.closest(".dt"));
     const ix = days.indexOf(day);
     $("day-prev").onclick = () => go5(ix + 1, -1); $("day-next").onclick = () => go5(ix - 1, 1);
@@ -1274,6 +1279,10 @@ async function fiveTable(dt) {
     if (r.x) h += `<tr><td class="n">　最大時の回転数 <small>rpm</small></td><td><b>${fmt(top.rpmAt, 0)}</b></td><td>―</td><td>―</td><td>${top.tm}</td><td></td></tr>`;
   });
   return h + `</table></div><p class="note">最大・平均・最小と、最大になった時刻、その日の推移。トルク・出力は空気流量からの推定値です。${per.length > 1 ? "複数の走行はまとめて集計しています。" : ""}</p>`;
+}
+function preloadDay(key) {
+  const dt = trips.filter(t => dayOf(t.startMs) === key);
+  return Promise.all(dt.flatMap(t => [fiveStatsOf(t), fiveMaxOf(t)])).catch(() => {});
 }
 const fiveBig = (it, m, note) => m == null
   ? `<div class="five-card none"><div class="lb">${it.short || it.label}</div><div class="v">データなし</div></div>`
