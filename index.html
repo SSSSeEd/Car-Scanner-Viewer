@@ -194,8 +194,8 @@ body.five .stats { display: block; }
 .five-grid { display: grid; gap: 10px; }
 .five-card { position: relative; background: var(--surface); border: 1px solid var(--line); border-left: 6px solid var(--accent); border-radius: 14px; padding: 12px 16px 14px; overflow: hidden; }
 .five-card .lb { font-size: .82rem; font-weight: 700; color: var(--muted); letter-spacing: .08em; }
-.five-card .v { font-family: var(--font-num); font-weight: 700; font-size: clamp(2.8rem, 15vw, 4rem); line-height: 1.05; color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
-.five-card .v small { font-size: 1.15rem; margin-left: 6px; color: var(--muted); letter-spacing: 0; }
+.five-card .v { font-family: var(--font-num); font-weight: 700; font-size: clamp(1.6rem, 8vw, 1.9rem); line-height: 1.1; color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.five-card .v small { font-size: .85rem; margin-left: 6px; color: var(--muted); letter-spacing: 0; }
 .five-card .at { font-size: .78rem; color: var(--muted); }
 .five-card .stamp { position: absolute; right: 12px; top: 10px; font-size: .8rem; font-weight: 700; color: var(--accent); border: 2px solid var(--accent); border-radius: 6px; padding: 0 8px; transform: rotate(-6deg); }
 .five-card:not(.none) { cursor: pointer; }
@@ -207,6 +207,29 @@ body.five .stats { display: block; }
 .five-card .info p { margin: 0 0 6px; }
 .five-card .sub { color: var(--muted); font-size: .78rem; }
 .five-card .info b { font-family: var(--font-num); }
+.warn7 { display: inline-block; margin-left: 8px; font-family: var(--font-body); font-size: .72rem; font-weight: 700; color: var(--warn); background: var(--accent-soft); border-radius: 6px; padding: 1px 8px; vertical-align: middle; letter-spacing: 0; }
+.five-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.five-bar .seg { display: flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; font-size: .82rem; }
+.five-bar .seg button { font: inherit; border: 0; background: transparent; color: var(--muted); padding: 3px 14px; cursor: pointer; }
+.five-bar .seg button.on { background: var(--accent); color: #141b21; font-weight: 700; }
+.five-bar .nav { margin-left: auto; display: flex; gap: 6px; }
+.five-bar .nav button { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 10px; padding: 3px 12px; cursor: pointer; }
+.five-bar .nav button:disabled { opacity: .35; cursor: default; }
+.five-swipe { touch-action: pan-y; }
+.dt { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font-size: .78rem; overflow-x: auto; }
+.dt table { width: 100%; border-collapse: collapse; }
+.dt th { font-weight: 700; color: var(--muted); text-align: right; padding: 6px 4px; background: var(--surface-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
+.dt td { padding: 6px 4px; text-align: right; border-bottom: 1px solid var(--line); font-family: var(--font-num); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dt th:first-child, .dt td:first-child { text-align: left; padding-left: 10px; }
+.dt tr:last-child td { border: 0; }
+.dt td.n { font-family: var(--font-body); font-weight: 700; color: var(--muted); font-size: .78rem; }
+.dt td.n i { font-style: normal; color: var(--warn); margin-left: 2px; }
+.dt td.n small { font-weight: 400; }
+.dt td b { color: var(--accent); }
+.dt td.w b { color: var(--danger); }
+.dt td svg { display: block; width: 48px; height: 20px; margin-left: auto; }
+.dt td svg polyline { fill: none; stroke: var(--sel); stroke-width: 1.4; }
+.dt .sec td { background: var(--surface-2); font-family: var(--font-body); font-weight: 700; color: var(--muted); text-align: left; padding: 4px 10px; font-size: .72rem; }
 .five-card.none .v { font-size: 1.4rem; color: var(--muted); font-weight: 600; }
 .five-card.none { border-left-color: var(--line); }
 </style>
@@ -703,8 +726,8 @@ let usual = null; // per-person baselines for the day diagnosis
 let SIMPLE = true;
 try { SIMPLE = localStorage.getItem("ddw-simple") !== "0"; } catch {}
 // 回転数・速度・トルク・出力・水温だけの表示: ?five=1 で開くとオンになり、この端末に覚えます(?five=0 で戻す)
-let FIVE = false;
-try { const q = new URLSearchParams(location.search).get("five"); if (q === "1" || q === "0") localStorage.setItem("ddw-five", q); FIVE = localStorage.getItem("ddw-five") === "1"; } catch {}
+let FIVE = false, FIVEMODE = "list";
+try { const q = new URLSearchParams(location.search).get("five"); if (q === "1" || q === "0") localStorage.setItem("ddw-five", q); FIVE = localStorage.getItem("ddw-five") === "1"; FIVEMODE = localStorage.getItem("ddw-fivemode") === "simple" ? "simple" : "list"; } catch {}
 function applyMode() {
   document.body.classList.toggle("simple", SIMPLE);
   document.body.classList.toggle("five", FIVE);
@@ -830,7 +853,8 @@ function renderDay() {
           <div class="pills">${pills}</div>
         </div>
       </div>
-      <div class="${FIVE ? "five-grid" : "kpis"}"${FIVE ? ' id="five-kpis"' : ""}>
+      ${FIVE ? `<div class="five-bar"><div class="seg" id="five-mode"><button type="button" data-m="list" class="${FIVEMODE === "list" ? "on" : ""}">一覧</button><button type="button" data-m="simple" class="${FIVEMODE === "simple" ? "on" : ""}">簡易</button></div><div class="nav"><button type="button" id="day-prev" aria-label="前の日"${days.indexOf(dayKey) >= days.length - 1 ? " disabled" : ""}>◀</button><button type="button" id="day-next" aria-label="次の日"${days.indexOf(dayKey) <= 0 ? " disabled" : ""}>▶</button></div></div>` : ""}
+      <div class="${FIVE ? "five-grid five-swipe" : "kpis"}"${FIVE ? ' id="five-kpis"' : ""}>
         ${FIVE ? FIVE_ITEMS.map(it => `<div class="five-card none"><div class="lb">${it.short || it.label}</div><div class="v">―</div></div>`).join("") : `<div class="kpi"><b>${fmt(km)} km</b><span>距離</span></div>
         <div class="kpi"><b>${fmt(L, 2)} L</b><span>燃料</span></div>
         <div class="kpi"><b>${dur(durS)}</b><span>運転時間</span></div>
@@ -840,19 +864,38 @@ function renderDay() {
     ${adv.length ? `<div class="card"><h3>今日のひとこと</h3><ul class="advice">${adv.map(([st, h, p]) => `<li class="${st}"><div><h4>${h}</h4><p>${p}</p></div></li>`).join("")}</ul></div>` : ""}
     <div class="card"><h3>この日の走行</h3><div class="tripcards">${dt.map((t, i) => {
       const e = explain(t);
-      return `<button type="button" class="tc" data-id="${encodeURIComponent(t.id)}"><span class="t">${clock(t.startSec).slice(0, 5)}</span><span class="m">${fmt(t.distKm)} km・${dur(t.durS)}・最高 ${fmt(t.maxKmh, 0)} km/h${(w => w ? `・${w.name} ${fmt(w.temp, 0)}℃` : "")(wxOf(t))}</span>
+      return `<button type="button" class="tc" data-id="${encodeURIComponent(t.id)}"><span class="t">${clock(t.startSec).slice(0, 5)}</span><span class="m">${fmt(t.distKm)} km・${dur(t.durS)}・最高 ${fmt(t.maxKmh, 0)} km/h${FIVE ? `<span class="pk" data-pk="${encodeURIComponent(t.id)}"></span>` : ""}${(w => w ? `・${w.name} ${fmt(w.temp, 0)}℃` : "")(wxOf(t))}</span>
         <span class="e">${fmt(t.kmPerL)}<small class="${e && e.diff >= 0 ? "good" : "bad"}">${e ? signed(e.diff) : ""}</small></span><canvas data-i="${i}"></canvas></button>`; }).join("")}</div>
       <p class="note">押すと、その走行の診断とグラフを開きます。</p></div>`;
   box.querySelectorAll("#days button").forEach(b => b.onclick = () => { dayKey = b.dataset.k; renderDay(); });
   box.querySelectorAll(".tc").forEach(b => b.onclick = () => openTrip(decodeURIComponent(b.dataset.id)));
   box.querySelectorAll(".tc canvas").forEach(cv => spark(cv, dt[+cv.dataset.i].spark || []));
+  fillPeaks(box);
   if (FIVE) {
     const day = dayKey;
-    Promise.all(dt.map(fiveMaxOf)).then(rs => {
-      if (view !== "day" || dayKey !== day) return;
+    const draw5 = async () => {
       const el = $("five-kpis"); if (!el) return;
-      el.innerHTML = FIVE_ITEMS.map((it, k) => { const v = rs.map(r => r && r[k]).filter(x => x != null); return fiveBig(it, v.length ? v.reduce((a, z) => z.v > a.v ? z : a) : null, v.length > 1 ? "複数の走行のうち、最大が出た走行の内訳です。" : ""); }).join("");
-    });
+      if (FIVEMODE === "list") {
+        const rows = await fiveTable(dt);
+        if (view !== "day" || dayKey !== day || !$("five-kpis")) return;
+        $("five-kpis").className = ""; $("five-kpis").innerHTML = rows;
+      } else {
+        const rs = await Promise.all(dt.map(fiveMaxOf));
+        if (view !== "day" || dayKey !== day || !$("five-kpis")) return;
+        $("five-kpis").className = "five-grid five-swipe";
+        $("five-kpis").innerHTML = FIVE_ITEMS.map((it, k) => { const v = rs.map(r => r && r[k]).filter(x => x != null); return fiveBig(it, v.length ? v.reduce((a, z) => z.v > a.v ? z : a) : null, v.length > 1 ? "複数の走行のうち、最大が出た走行の内訳です。" : ""); }).join("");
+      }
+    };
+    draw5();
+    box.querySelectorAll("#five-mode button").forEach(b => b.onclick = () => { FIVEMODE = b.dataset.m; try { localStorage.setItem("ddw-fivemode", FIVEMODE); } catch {} renderDay(); });
+    const go5 = n => { if (n >= 0 && n < days.length) { dayKey = days[n]; renderDay(); } };
+    const ix = days.indexOf(day);
+    $("day-prev").onclick = () => go5(ix + 1); $("day-next").onclick = () => go5(ix - 1);
+    let x0 = null, y0 = null;
+    box.ontouchstart = e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; };
+    box.ontouchend = e => { if (x0 === null) return; const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0; x0 = null; if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go5(dx < 0 ? ix - 1 : ix + 1); };
+    box.onpointerdown = e => { if (e.pointerType === "mouse") { x0 = e.clientX; y0 = e.clientY; } };
+    box.onpointerup = e => { if (e.pointerType !== "mouse" || x0 === null) return; const dx = e.clientX - x0, dy = e.clientY - y0; x0 = null; if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy) * 1.5) go5(dx < 0 ? ix - 1 : ix + 1); };
   } else gauge($("gauge"), kml, U);
   const pressed = box.querySelector('#days [aria-pressed="true"]'); pressed && pressed.scrollIntoView({ inline: "nearest", block: "nearest" });
 }
@@ -911,10 +954,24 @@ function renderList() {
     const ex = explain(t);
     const dev = ex ? `<span class="${ex.diff >= 0 ? "good" : "bad"}">平均比 ${signed(ex.diff)}</span>` : "";
     b.innerHTML = `<span class="when">${dateStr(t.startMs)}</span><span class="eco">${fmt(t.kmPerL)} km/L</span>
-      <span class="meta"><span>${fmt(t.distKm)} km</span><span>${dur(t.durS)}</span><span>最高 ${fmt(t.maxKmh, 0)} km/h</span>${dev}</span>`;
+      <span class="meta"><span>${fmt(t.distKm)} km</span><span>${dur(t.durS)}</span><span>最高 ${fmt(t.maxKmh, 0)} km/h</span>${FIVE ? `<span class="pk" data-pk="${encodeURIComponent(t.id)}"></span>` : ""}${dev}</span>`;
     b.onclick = () => openTrip(t.id);
     box.appendChild(b);
   }
+  fillPeaks(box);
+}
+// 5項目表示: 一覧の各走行に最大トルク・最大出力(どちらも推定値)を足す
+function fillPeaks(root) {
+  if (!FIVE) return;
+  root.querySelectorAll(".pk[data-pk]").forEach(async el => {
+    const t = trips.find(x => x.id === decodeURIComponent(el.dataset.pk)); if (!t) return;
+    const r = await fiveMaxOf(t); if (!r) return;
+    const ti = FIVE_ITEMS.findIndex(i => i.torque), pi = FIVE_ITEMS.findIndex(i => i.alt);
+    const parts = [];
+    if (r[ti]) parts.push(`最大トルク ${fmt(r[ti].v, 0)} N·m(推定)`);
+    if (r[pi]) parts.push(`最大出力 ${fmt(r[pi].v, 1)} hp(推定)`);
+    el.textContent = parts.length ? "・" + parts.join("・") : "";
+  });
 }
 
 // ---------- overview ----------
@@ -1101,8 +1158,8 @@ function renderDiag(t) {
 const FIVE_ITEMS = [
   { name: "エンジン回転数", label: "回転数", unit: "rpm", dec: 0 },
   { name: SP, label: "速度", unit: "km/h", dec: 0 },
-  { name: "トルク", label: "トルク(出力と回転数からの計算値)", short: "トルク", unit: "N·m", dec: 0, torque: true },
-  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", short: "出力", unit: "hp", dec: 1 },
+  { name: "トルク", label: "トルク(出力と回転数からの計算値)", short: "トルク(推定)", unit: "N·m", dec: 0, torque: true },
+  { name: "Power from MAF", alt: "瞬時エンジン出力 (燃費)", label: "出力(空気流量からの推定)", short: "出力(推定)", unit: "hp", dec: 1 },
   { name: CT, label: "水温", unit: "℃", dec: 0 },
 ];
 function fiveData(it, S) {
@@ -1136,7 +1193,7 @@ function fiveFacts(it, S, d, at, t) {
   } else if (it.torque) {
     f.push(`回転数1,000rpm以上のときの平均は <b>${fmt(avg, 0)} N·m</b>。`);
     const v = at_(rp, "rpm"); if (v) f.push(`最大のときの回転数は <b>${v}</b>、速度は <b>${at_(sp, "km/h") || "―"}</b>。`);
-    f.push(`<span class="sub">※出力と回転数からの計算値です。</span>`);
+    f.push(`<span class="sub">※出力と回転数からの計算値(推定)です。</span>`);
   } else if (it.alt) {
     f.push(`平均は <b>${fmt(avg, 1)} hp</b>。`);
     const v = at_(rp, "rpm"); if (v) f.push(`最大のときの回転数は <b>${v}</b>、速度は <b>${at_(sp, "km/h") || "―"}</b>。`);
@@ -1155,9 +1212,52 @@ async function fiveMaxOf(t) { // 走行ごとの最大値(1秒系列から)。�
   const r = FIVE_ITEMS.map(it => { const d = fiveData(it, S); if (!d) return null; let m = -Infinity, at = -1; for (let i = 0; i < d.length; i++) { const x = d[i]; if (isFinite(x) && x > m) { m = x; at = i; } } return at < 0 ? null : { v: m, t: clock(t.startSec + at).slice(0, 5), facts: fiveFacts(it, S, d, at, t) }; });
   fiveMaxCache.set(t.id, r); return r;
 }
+// 一覧表示: 項目ごとの最大・平均・最小・最大の時刻・推移(その日の全走行をまとめる)
+const FIVE_ROWS = [
+  ["エンジン・走り"],
+  { n: "回転数", u: "rpm", k: RPM, d: 0, w: 7000 }, { n: "速度", u: "km/h", k: SP, d: 0 }, { n: "加速度", u: "", k: "加速", d: 2 }, { n: "スロットル", u: "%", k: "スロットル位置", d: 1 },
+  ["トルク・出力(推定)"],
+  { n: "トルク", u: "N·m", est: 1, f: S => fiveData(FIVE_ITEMS[2], S), d: 0, x: "rpm" }, { n: "出力", u: "hp", est: 1, f: S => fiveData(FIVE_ITEMS[3], S), d: 1 },
+  ["吸気・燃料"],
+  { n: "空気流量", u: "g/s", k: "空気流量", d: 1 }, { n: "吸気管圧", u: "kPa", k: "インテークマニホールド圧力(絶対値)", d: 0 }, { n: "吸気温", u: "℃", k: "吸気温度", d: 0 }, { n: "燃料流量", u: "L/h", k: LH, d: 1 },
+  ["温度"],
+  { n: "水温", u: "℃", k: CT, d: 0 },
+];
+const fiveStatCache = new Map();
+async function fiveStatsOf(t) {
+  if (fiveStatCache.has(t.id)) return fiveStatCache.get(t.id);
+  const S = await getSeries(t.id); if (!S) return null;
+  const out = FIVE_ROWS.map(r => {
+    if (Array.isArray(r)) return null;
+    const d = r.f ? r.f(S) : S[r.k]; if (!d) return null;
+    let mx = -Infinity, mn = Infinity, sum = 0, n = 0, at = -1;
+    for (let i = 0; i < d.length; i++) { const x = d[i]; if (!isFinite(x)) continue; n++; sum += x; if (x > mx) { mx = x; at = i; } if (x < mn) mn = x; }
+    if (!n) return null;
+    const B = Math.min(40, d.length), sp = [];
+    for (let b = 0; b < B; b++) { let s2 = 0, c = 0; for (let i = Math.floor(b * d.length / B); i < Math.floor((b + 1) * d.length / B); i++) if (isFinite(d[i])) { s2 += d[i]; c++; } sp.push(c ? s2 / c : NaN); }
+    return { mx, mn, sum, n, at, tm: clock(t.startSec + at).slice(0, 5), sp, rpmAt: r.x && S[RPM] ? S[RPM][at] : NaN };
+  });
+  fiveStatCache.set(t.id, out); return out;
+}
+async function fiveTable(dt) {
+  const per = (await Promise.all(dt.map(fiveStatsOf))).filter(Boolean);
+  const spark = a => { const v = a.filter(isFinite); if (v.length < 2) return ""; const lo = Math.min(...v), hi = Math.max(...v), w = 51 / (a.length - 1);
+    return `<svg viewBox="0 0 51 16"><polyline points="${a.map((x, i) => isFinite(x) ? `${(i * w).toFixed(1)},${(15 - (hi > lo ? (x - lo) / (hi - lo) : .5) * 14).toFixed(1)}` : "").filter(Boolean).join(" ")}"/></svg>`; };
+  let h = `<div class="dt"><table><tr><th>項目</th><th>最大</th><th>平均</th><th>最小</th><th>最大時刻</th><th>推移</th></tr>`;
+  FIVE_ROWS.forEach((r, k) => {
+    if (Array.isArray(r)) { h += `<tr class="sec"><td colspan="6">${r[0]}</td></tr>`; return; }
+    const ss = per.map(p => p[k]).filter(Boolean);
+    const nm = `${r.n}${r.est ? "<i>推定</i>" : ""}${r.u ? ` <small>${r.u}</small>` : ""}`;
+    if (!ss.length) { h += `<tr><td class="n">${nm}</td><td colspan="5" style="text-align:center;color:var(--muted)">データなし</td></tr>`; return; }
+    const top = ss.reduce((a, z) => z.mx > a.mx ? z : a), n = ss.reduce((a, z) => a + z.n, 0), avg = ss.reduce((a, z) => a + z.sum, 0) / n, mn = Math.min(...ss.map(z => z.mn));
+    h += `<tr><td class="n">${nm}</td><td class="${r.w && top.mx > r.w ? "w" : ""}"><b>${fmt(top.mx, r.d)}</b></td><td>${fmt(avg, r.d)}</td><td>${fmt(mn, r.d)}</td><td>${top.tm}</td><td>${spark(ss.flatMap(z => z.sp))}</td></tr>`;
+    if (r.x) h += `<tr><td class="n">　最大時の回転数 <small>rpm</small></td><td><b>${fmt(top.rpmAt, 0)}</b></td><td>―</td><td>―</td><td>${top.tm}</td><td></td></tr>`;
+  });
+  return h + `</table></div><p class="note">最大・平均・最小と、最大になった時刻、その日の推移。トルク・出力は空気流量からの推定値です。${per.length > 1 ? "複数の走行はまとめて集計しています。" : ""}</p>`;
+}
 const fiveBig = (it, m, note) => m == null
   ? `<div class="five-card none"><div class="lb">${it.short || it.label}</div><div class="v">データなし</div></div>`
-  : `<div class="five-card" role="button" tabindex="0" aria-expanded="false"><span class="stamp">最大</span><div class="lb">${it.short || it.label}</div><div class="v">${fmt(m.v, it.dec)}<small>${it.unit}</small></div><div class="at"><span class="more">くわしく</span>${m.t} ごろ</div>
+  : `<div class="five-card" role="button" tabindex="0" aria-expanded="false"><span class="stamp">最大</span><div class="lb">${it.short || it.label}</div><div class="v">${fmt(m.v, it.dec)}<small>${it.unit}</small>${it.name === RPM && m.v > 7000 ? `<span class="warn7">⚠ 7,000rpm超え</span>` : ""}</div><div class="at"><span class="more">くわしく</span>${m.t} ごろ</div>
     <div class="info">${m.facts.map(x => `<p>${x}</p>`).join("")}${note ? `<p class="sub">${note}</p>` : ""}</div></div>`;
 function drawCharts() {
   const box = $("d-charts"); box.innerHTML = ""; charts = [];
